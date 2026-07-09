@@ -121,10 +121,12 @@ func (r *PrefectAutomationReconciler) needsSync(automation *prefectiov1.PrefectA
 	if automation.Status.ObservedGeneration < automation.Generation {
 		return true
 	}
-	if automation.Status.LastSyncTime == nil {
-		return true
-	}
-	return time.Since(automation.Status.LastSyncTime.Time) > 10*time.Minute
+	// Otherwise re-sync on every reconcile — parity with PrefectDeployment, whose
+	// status carries no LastSyncTime and so re-syncs each loop. This heals an
+	// out-of-band edit/delete within one requeue interval (~10s) instead of only
+	// on a coarse drift timer or an operator restart. syncWithPrefect is
+	// idempotent: update-in-place when present, recreate on 404.
+	return true
 }
 
 // syncWithPrefect creates or updates the automation in the Prefect API
