@@ -30,6 +30,7 @@ import (
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
 // PrefectServerSpec defines the desired state of a PrefectServer
+// +kubebuilder:validation:XValidation:rule="!has(self.replicas) || has(self.postgres)",message="replicas is only supported with the postgres backend (sqlite/ephemeral use node-local storage and must run a single replica)"
 type PrefectServerSpec struct {
 	// Version defines the version of the Prefect Server to deploy
 	Version *string `json:"version,omitempty"`
@@ -84,9 +85,10 @@ type PrefectServerSpec struct {
 	// NodeSelector defines the node selector for the Prefect Server Deployment and migration Job
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 
-	// Replicas defines the number of Prefect Server Deployment replicas. Only honored with a
-	// Postgres backend (sqlite/ephemeral use node-local storage and always run a single replica).
-	// Defaults to 1. Mirrors `server.replicaCount` in the official prefect-server Helm chart.
+	// Replicas defines the number of Prefect Server Deployment replicas. Requires the Postgres
+	// backend — setting it with the sqlite/ephemeral backend is rejected (they use node-local
+	// storage and must run a single replica). Defaults to 1. Mirrors `server.replicaCount` in
+	// the official prefect-server Helm chart.
 	Replicas *int32 `json:"replicas,omitempty"`
 
 	// Affinity defines the scheduling affinity/anti-affinity for the Prefect Server pods; use
