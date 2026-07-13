@@ -38,8 +38,14 @@ type PrefectWorkPoolSpec struct {
 	// The type of the work pool, such as "kubernetes" or "process"
 	Type string `json:"type,omitempty"`
 
-	// Workers defines the number of workers to run in the Work Pool
+	// Workers defines the number of workers to run in the Work Pool (the worker Deployment
+	// replica count). Mirrors `worker.replicaCount` in the official prefect-worker Helm chart.
 	Workers int32 `json:"workers,omitempty"`
+
+	// Affinity defines the scheduling affinity/anti-affinity for the worker pods; use
+	// podAntiAffinity to spread the workers across nodes. Mirrors `worker.affinity` in the
+	// official prefect-worker Helm chart.
+	Affinity *corev1.Affinity `json:"affinity,omitempty"`
 
 	// Resources defines the CPU and memory resources for each worker in the Work Pool
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`

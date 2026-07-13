@@ -168,6 +168,8 @@ func (r *PrefectWorkPoolReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 				},
 				Spec: corev1.PodSpec{
 					ServiceAccountName: workPool.ServiceAccount(),
+					// Scheduling affinity/anti-affinity (e.g. podAntiAffinity to spread workers across nodes).
+					Affinity: workPool.Spec.Affinity,
 					Volumes: []corev1.Volume{
 						{
 							Name: constants.PrefectDataVolumeName,
