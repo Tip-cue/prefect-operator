@@ -193,9 +193,18 @@ func (r *PrefectDeploymentReconciler) syncWithPrefect(ctx context.Context, deplo
 
 	var prefectDeployment *prefect.Deployment
 	if deployment.Status.Id != nil && *deployment.Status.Id != "" {
-		prefectDeployment, err = prefectClient.UpdateDeployment(ctx, *deployment.Status.Id, deploymentSpec)
-		if errors.Is(err, prefect.ErrDeploymentNotFound) {
-			prefectDeployment, err = prefectClient.CreateOrUpdateDeployment(ctx, deploymentSpec)
+		// The server deletes all future auto-scheduled runs on every
+		// deployment update, even a no-op one, so skip the update when the
+		// remote deployment already matches the desired spec.
+		remote, getErr := prefectClient.GetDeployment(ctx, *deployment.Status.Id)
+		if getErr == nil && prefect.DeploymentUpToDate(remote, deploymentSpec) {
+			log.V(1).Info("Prefect deployment already up to date, skipping update", "deployment", deployment.Name)
+			prefectDeployment = remote
+		} else {
+			prefectDeployment, err = prefectClient.UpdateDeployment(ctx, *deployment.Status.Id, deploymentSpec)
+			if errors.Is(err, prefect.ErrDeploymentNotFound) {
+				prefectDeployment, err = prefectClient.CreateOrUpdateDeployment(ctx, deploymentSpec)
+			}
 		}
 	} else {
 		prefectDeployment, err = prefectClient.CreateOrUpdateDeployment(ctx, deploymentSpec)
