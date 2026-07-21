@@ -59,6 +59,7 @@ func main() {
 	var probeAddr string
 	var enableHTTP2 bool
 	var defaultResyncInterval time.Duration
+	var minuteBoundaryGuard time.Duration
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
@@ -69,6 +70,9 @@ func main() {
 	flag.DurationVar(&defaultResyncInterval, "default-resync-interval", 5*time.Minute,
 		"How often to re-check each Prefect resource against the Prefect API to correct "+
 			"out-of-band drift, unless a resource sets its own spec.interval.")
+	flag.DurationVar(&minuteBoundaryGuard, "deployment-minute-boundary-guard", 15*time.Second,
+		"Defer deployment syncs that would start within this window before a wall-clock "+
+			"minute boundary, so run-wiping updates cannot race cron fires. Zero disables.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -149,6 +153,7 @@ func main() {
 		Scheme:                mgr.GetScheme(),
 		PrefectClient:         nil, // Will create client dynamically from deployment config
 		DefaultResyncInterval: defaultResyncInterval,
+		MinuteBoundaryGuard:   minuteBoundaryGuard,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "PrefectDeployment")
 		os.Exit(1)

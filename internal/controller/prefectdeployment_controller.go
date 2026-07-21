@@ -64,6 +64,13 @@ type PrefectDeploymentReconciler struct {
 	// DefaultResyncInterval is the fallback drift-detection interval used when a
 	// PrefectDeployment does not set spec.interval.
 	DefaultResyncInterval time.Duration
+	// MinuteBoundaryGuard defers syncs of existing deployments that would run
+	// within this window before a wall-clock minute boundary. Mutating a
+	// deployment deletes its future auto-scheduled runs, and cron runs fire on
+	// minute boundaries — a wipe in the final seconds of a minute can outrun
+	// the scheduler's repopulation and skip the next fire. Zero disables the
+	// guard.
+	MinuteBoundaryGuard time.Duration
 }
 
 // resyncInterval returns the effective drift-detection interval for the
@@ -190,6 +197,18 @@ func (r *PrefectDeploymentReconciler) syncWithPrefect(ctx context.Context, deplo
 
 	desiredSchedules := deploymentSpec.Schedules
 	deploymentSpec.Schedules = nil
+
+	// Don't start a sync of an existing deployment in the final seconds of a
+	// minute: any mutating call below wipes its future auto-scheduled runs,
+	// and cron runs fire on minute boundaries, so the scheduler may not
+	// repopulate the next run before its fire time passes. Requeue just past
+	// the boundary instead.
+	if r.MinuteBoundaryGuard > 0 && deployment.Status.Id != nil && *deployment.Status.Id != "" {
+		if wait := utils.UntilNextMinute(time.Now()); wait <= r.MinuteBoundaryGuard {
+			log.V(1).Info("Deferring sync past minute boundary", "deployment", deployment.Name, "wait", wait.String())
+			return ctrl.Result{RequeueAfter: wait + time.Second}, nil
+		}
+	}
 
 	var prefectDeployment *prefect.Deployment
 	if deployment.Status.Id != nil && *deployment.Status.Id != "" {

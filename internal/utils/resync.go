@@ -71,3 +71,11 @@ func JitterResyncInterval(interval time.Duration) time.Duration {
 	// #nosec G404 -- jitter is for load spreading, not security.
 	return interval + time.Duration(rand.Int63n(int64(interval)/10+1))
 }
+
+// UntilNextMinute returns how long until the next wall-clock minute boundary
+// after now. Cron schedules fire on minute boundaries, so callers use this to
+// avoid mutating a deployment (which deletes its future auto-scheduled runs)
+// in the final seconds of a minute.
+func UntilNextMinute(now time.Time) time.Duration {
+	return now.Truncate(time.Minute).Add(time.Minute).Sub(now)
+}

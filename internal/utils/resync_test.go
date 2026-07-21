@@ -95,3 +95,23 @@ func TestJitterResyncIntervalZero(t *testing.T) {
 		t.Fatalf("JitterResyncInterval(0) = %v, want 0", got)
 	}
 }
+
+func TestUntilNextMinute(t *testing.T) {
+	base := time.Date(2026, 7, 21, 10, 30, 0, 0, time.UTC)
+	cases := map[string]struct {
+		now  time.Time
+		want time.Duration
+	}{
+		"on the boundary":       {base, time.Minute},
+		"mid minute":            {base.Add(30 * time.Second), 30 * time.Second},
+		"last second":           {base.Add(59 * time.Second), time.Second},
+		"sub-second remainder":  {base.Add(59*time.Second + 500*time.Millisecond), 500 * time.Millisecond},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := UntilNextMinute(tc.now); got != tc.want {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
