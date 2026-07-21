@@ -14,7 +14,7 @@ func matchingRemoteAndDesired() (*Deployment, *DeploymentSpec) {
 		Paused:                 false,
 		Tags:                   []string{"adsb", "etl"},
 		Parameters:             map[string]any{"lookback": float64(5)},
-		JobVariables:           map[string]any{"env": map[string]any{"FOO": "bar"}},
+		JobVariables:           map[string]any{"env": map[string]any{"FOO": "bar-1"}},
 		WorkPoolName:           strPtr("kubernetes-pipelines-pool"),
 		WorkQueueName:          strPtr("default"),
 		Entrypoint:             strPtr("app/main.py:main"),
@@ -26,7 +26,7 @@ func matchingRemoteAndDesired() (*Deployment, *DeploymentSpec) {
 		Paused:           boolPtr(false),
 		Tags:             []string{"etl", "adsb"}, // order differs on purpose
 		Parameters:       map[string]any{"lookback": float64(5)},
-		JobVariables:     map[string]any{"env": map[string]any{"FOO": "bar"}},
+		JobVariables:     map[string]any{"env": map[string]any{"FOO": "bar-1"}},
 		WorkPoolName:     strPtr("kubernetes-pipelines-pool"),
 		WorkQueueName:    strPtr("default"),
 		Entrypoint:       strPtr("app/main.py:main"),
@@ -71,28 +71,30 @@ func TestDeploymentUpToDate(t *testing.T) {
 	})
 
 	mutations := map[string]func(remote *Deployment, desired *DeploymentSpec){
-		"name":                     func(r *Deployment, d *DeploymentSpec) { d.Name = "other" },
-		"flow id":                  func(r *Deployment, d *DeploymentSpec) { d.FlowID = "flow-2" },
-		"description":              func(r *Deployment, d *DeploymentSpec) { d.Description = strPtr("new") },
-		"version":                  func(r *Deployment, d *DeploymentSpec) { d.Version = strPtr("v2") },
-		"work pool":                func(r *Deployment, d *DeploymentSpec) { d.WorkPoolName = strPtr("other-pool") },
-		"work queue":               func(r *Deployment, d *DeploymentSpec) { d.WorkQueueName = strPtr("other-queue") },
-		"entrypoint":               func(r *Deployment, d *DeploymentSpec) { d.Entrypoint = strPtr("app/other.py:main") },
-		"path":                     func(r *Deployment, d *DeploymentSpec) { d.Path = strPtr("/new/path") },
-		"paused":                   func(r *Deployment, d *DeploymentSpec) { d.Paused = boolPtr(true) },
+		"name":                     func(_ *Deployment, d *DeploymentSpec) { d.Name = "other" },
+		"flow id":                  func(_ *Deployment, d *DeploymentSpec) { d.FlowID = "flow-2" },
+		"description":              func(_ *Deployment, d *DeploymentSpec) { d.Description = strPtr("new") },
+		"version":                  func(_ *Deployment, d *DeploymentSpec) { d.Version = strPtr("v2") },
+		"work pool":                func(_ *Deployment, d *DeploymentSpec) { d.WorkPoolName = strPtr("other-pool") },
+		"work queue":               func(_ *Deployment, d *DeploymentSpec) { d.WorkQueueName = strPtr("other-queue") },
+		"entrypoint":               func(_ *Deployment, d *DeploymentSpec) { d.Entrypoint = strPtr("app/other.py:main") },
+		"path":                     func(_ *Deployment, d *DeploymentSpec) { d.Path = strPtr("/new/path") },
+		"paused":                   func(_ *Deployment, d *DeploymentSpec) { d.Paused = boolPtr(true) },
 		"enforce parameter schema": func(r *Deployment, d *DeploymentSpec) { d.EnforceParameterSchema = boolPtr(!r.EnforceParameterSchema) },
-		"concurrency limit":        func(r *Deployment, d *DeploymentSpec) { d.ConcurrencyLimit = intPtr(5) },
-		"concurrency limit unset remotely": func(r *Deployment, d *DeploymentSpec) {
+		"concurrency limit":        func(_ *Deployment, d *DeploymentSpec) { d.ConcurrencyLimit = intPtr(5) },
+		"concurrency limit unset remotely": func(r *Deployment, _ *DeploymentSpec) {
 			r.GlobalConcurrencyLimit = nil
 			r.ConcurrencyLimit = nil
 		},
-		"tags":          func(r *Deployment, d *DeploymentSpec) { d.Tags = []string{"adsb", "jam"} },
-		"parameters":    func(r *Deployment, d *DeploymentSpec) { d.Parameters = map[string]any{"lookback": float64(6)} },
-		"job variables": func(r *Deployment, d *DeploymentSpec) { d.JobVariables = map[string]any{"env": map[string]any{"FOO": "baz"}} },
-		"parameter openapi schema": func(r *Deployment, d *DeploymentSpec) {
+		"tags":       func(_ *Deployment, d *DeploymentSpec) { d.Tags = []string{"adsb", "jam"} },
+		"parameters": func(_ *Deployment, d *DeploymentSpec) { d.Parameters = map[string]any{"lookback": float64(6)} },
+		"job variables": func(_ *Deployment, d *DeploymentSpec) {
+			d.JobVariables = map[string]any{"env": map[string]any{"FOO": "baz"}}
+		},
+		"parameter openapi schema": func(_ *Deployment, d *DeploymentSpec) {
 			d.ParameterOpenAPISchema = map[string]any{"type": "object"}
 		},
-		"pull steps": func(r *Deployment, d *DeploymentSpec) {
+		"pull steps": func(_ *Deployment, d *DeploymentSpec) {
 			d.PullSteps = []map[string]any{{"prefect.deployments.steps.git_clone": map[string]any{}}}
 		},
 	}
