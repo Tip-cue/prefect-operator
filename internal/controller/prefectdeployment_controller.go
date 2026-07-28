@@ -342,16 +342,6 @@ func scheduleNeedsUpdate(current, desired prefect.DeploymentSchedule) bool {
 }
 
 // setCondition sets a condition on the deployment status
-// declaredDeploymentFields lists the clear-tracked spec fields currently set,
-// by their CRD JSON names, for status.appliedFields.
-func declaredDeploymentFields(spec prefectiov1.PrefectDeploymentSpec) []string {
-	var fields []string
-	if spec.Deployment.ConcurrencyLimit != nil {
-		fields = append(fields, prefect.DeploymentFieldConcurrencyLimit)
-	}
-	return fields
-}
-
 func (r *PrefectDeploymentReconciler) setCondition(deployment *prefectiov1.PrefectDeployment, conditionType string, status metav1.ConditionStatus, reason, message string) {
 	condition := metav1.Condition{
 		Type:               conditionType,
