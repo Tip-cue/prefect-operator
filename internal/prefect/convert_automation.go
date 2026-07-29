@@ -39,6 +39,9 @@ const (
 	// keyMetric is the metric-trigger payload key (same spelling as the type
 	// discriminator value, different role).
 	keyMetric = "metric"
+	// actionTypeRunDeployment is the run-deployment action discriminator (also
+	// used by DeploymentNamesReferenced and tests).
+	actionTypeRunDeployment = "run-deployment"
 
 	// Trigger type discriminator values.
 	triggerTypeEvent    = "event"
@@ -256,6 +259,24 @@ func buildActions(actions []prefectiov1.PrefectAutomationAction, deploymentIDs m
 	return out, nil
 }
 
+// sourcedActionTypes are the action types whose server-side model actually has
+// a `source` (selected/inferred) field. Every other action type always infers
+// its target: the server silently drops a `source` key on write, so sending it
+// makes the stored action permanently differ from the desired payload — the
+// up-to-date check then never matches and every resync PUTs, rotating the
+// trigger UUID and orphaning its proactive buckets.
+var sourcedActionTypes = map[string]bool{
+	actionTypeRunDeployment: true,
+	"pause-deployment":      true,
+	"resume-deployment":     true,
+	"pause-work-queue":      true,
+	"resume-work-queue":     true,
+	"pause-work-pool":       true,
+	"resume-work-pool":      true,
+	"pause-automation":      true,
+	"resume-automation":     true,
+}
+
 func buildAction(a prefectiov1.PrefectAutomationAction, deploymentIDs map[string]string) (map[string]any, error) {
 	m := map[string]any{keyType: a.Type}
 	putStr := func(key string, v *string) {
@@ -275,7 +296,9 @@ func buildAction(a prefectiov1.PrefectAutomationAction, deploymentIDs map[string
 		}
 		m["deployment_id"] = id
 	}
-	putStr("source", a.Source)
+	if sourcedActionTypes[a.Type] {
+		putStr("source", a.Source)
+	}
 	putStr("automation_id", a.AutomationID)
 	putStr("work_pool_id", a.WorkPoolID)
 	putStr("work_queue_id", a.WorkQueueID)

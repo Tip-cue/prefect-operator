@@ -46,7 +46,6 @@ func zombieSpec() *AutomationSpec {
 		},
 		Actions: []map[string]any{{
 			keyType:   "change-flow-run-state",
-			"source":  "inferred",
 			"state":   "CRASHED",
 			"message": "no heartbeat",
 		}},
@@ -54,9 +53,14 @@ func zombieSpec() *AutomationSpec {
 }
 
 func TestAutomationUpToDate(t *testing.T) {
-	t.Run("matches despite remote trigger id and JSON number types", func(t *testing.T) {
+	t.Run("matches despite remote trigger id, JSON number types and server-filled action defaults", func(t *testing.T) {
 		spec := zombieSpec()
-		if !AutomationUpToDate(remoteFromSpec(t, spec), spec) {
+		remote := remoteFromSpec(t, spec)
+		// The server echoes change-flow-run-state actions with fields the spec
+		// never sends (verified live on Prefect 3.6.28).
+		remote.Actions[0]["name"] = nil
+		remote.Actions[0]["force"] = false
+		if !AutomationUpToDate(remote, spec) {
 			t.Fatal("up to date = false for an identical automation; want true")
 		}
 	})
