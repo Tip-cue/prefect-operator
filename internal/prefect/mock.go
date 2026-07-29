@@ -50,6 +50,11 @@ type MockClient struct {
 	// UpdateWorkQueueCalls counts UpdateWorkQueue calls, so tests can assert
 	// that an already-matching queue is not PATCHed
 	UpdateWorkQueueCalls int
+
+	// UpdateAutomationCalls counts UpdateAutomation calls, so tests can assert
+	// that an already-matching automation is not PUT (a PUT without a trigger
+	// id rotates the trigger UUID and orphans its proactive buckets)
+	UpdateAutomationCalls int
 }
 
 // NewMockClient creates a new mock Prefect client
@@ -109,6 +114,7 @@ func (m *MockClient) UpdateAutomation(ctx context.Context, id string, automation
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.UpdateAutomationCalls++
 	existing, ok := m.automations[id]
 	if !ok {
 		return nil, fmt.Errorf("automation %s: %w", id, ErrAutomationNotFound)
