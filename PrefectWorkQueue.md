@@ -8,12 +8,12 @@ Packages:
 
 Resource Types:
 
-- [PrefectDeployment](#prefectdeployment)
+- [PrefectWorkQueue](#prefectworkqueue)
 
 
 
 
-## PrefectDeployment
+## PrefectWorkQueue
 <sup><sup>[↩ Parent](#prefectiov1 )</sup></sup>
 
 
@@ -21,7 +21,7 @@ Resource Types:
 
 
 
-PrefectDeployment is the Schema for the prefectdeployments API
+PrefectWorkQueue is the Schema for the prefectworkqueues API
 
 <table>
     <thead>
@@ -41,7 +41,7 @@ PrefectDeployment is the Schema for the prefectdeployments API
       <tr>
       <td><b>kind</b></td>
       <td>string</td>
-      <td>PrefectDeployment</td>
+      <td>PrefectWorkQueue</td>
       <td>true</td>
       </tr>
       <tr>
@@ -50,216 +50,49 @@ PrefectDeployment is the Schema for the prefectdeployments API
       <td>Refer to the Kubernetes API documentation for the fields of the `metadata` field.</td>
       <td>true</td>
       </tr><tr>
-        <td><b><a href="#prefectdeploymentspec">spec</a></b></td>
+        <td><b><a href="#prefectworkqueuespec">spec</a></b></td>
         <td>object</td>
         <td>
-          PrefectDeploymentSpec defines the desired state of a PrefectDeployment<br/>
+          PrefectWorkQueueSpec defines the desired state of a PrefectWorkQueue.
+It mirrors the options of the Prefect Terraform provider's prefect_work_queue
+resource so work queues can be managed declaratively via the operator.
+
+A queue referenced by a PrefectDeployment's workQueue field is created
+implicitly by Prefect with no concurrency limit; declaring it here manages
+that limit (and priority) as config. Prefer a work-queue concurrency limit
+over a deployment-level one when run ORDER matters: workers pull from a
+queue sorted by next scheduled start time, whereas a deployment limit
+rejects the transition and re-schedules the run with a fresh timestamp,
+which loses the original ordering.<br/>
         </td>
         <td>false</td>
       </tr><tr>
-        <td><b><a href="#prefectdeploymentstatus">status</a></b></td>
+        <td><b><a href="#prefectworkqueuestatus">status</a></b></td>
         <td>object</td>
         <td>
-          PrefectDeploymentStatus defines the observed state of PrefectDeployment<br/>
+          PrefectWorkQueueStatus defines the observed state of a PrefectWorkQueue.<br/>
         </td>
         <td>false</td>
       </tr></tbody>
 </table>
 
 
-### PrefectDeployment.spec
-<sup><sup>[↩ Parent](#prefectdeployment)</sup></sup>
+### PrefectWorkQueue.spec
+<sup><sup>[↩ Parent](#prefectworkqueue)</sup></sup>
 
 
 
-PrefectDeploymentSpec defines the desired state of a PrefectDeployment
+PrefectWorkQueueSpec defines the desired state of a PrefectWorkQueue.
+It mirrors the options of the Prefect Terraform provider's prefect_work_queue
+resource so work queues can be managed declaratively via the operator.
 
-<table>
-    <thead>
-        <tr>
-            <th>Name</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b><a href="#prefectdeploymentspecdeployment">deployment</a></b></td>
-        <td>object</td>
-        <td>
-          Deployment configuration defining the Prefect deployment<br/>
-          <br/>
-            <i>Validations</i>:<li>!has(self.flow_name) || !has(oldSelf.flow_name) || self.flow_name == oldSelf.flow_name: flow_name is immutable; delete and recreate the deployment to change the flow</li>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b><a href="#prefectdeploymentspecserver">server</a></b></td>
-        <td>object</td>
-        <td>
-          Server configuration for connecting to Prefect API<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b><a href="#prefectdeploymentspecworkpool">workPool</a></b></td>
-        <td>object</td>
-        <td>
-          WorkPool configuration specifying where the deployment should run<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>interval</b></td>
-        <td>string</td>
-        <td>
-          Interval is how often to re-check this deployment against the Prefect API
-to correct out-of-band drift (edits or deletes made directly in Prefect).
-Defaults to the operator's --default-resync-interval when unset. Values
-below 10s are clamped.<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
-</table>
-
-
-### PrefectDeployment.spec.deployment
-<sup><sup>[↩ Parent](#prefectdeploymentspec)</sup></sup>
-
-
-
-Deployment configuration defining the Prefect deployment
-
-<table>
-    <thead>
-        <tr>
-            <th>Name</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>entrypoint</b></td>
-        <td>string</td>
-        <td>
-          Entrypoint is the entrypoint for the flow (e.g., "my_code.py:my_function")<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>concurrencyLimit</b></td>
-        <td>integer</td>
-        <td>
-          ConcurrencyLimit limits concurrent runs of this deployment. Removing
-the field after it has been applied removes the limit in Prefect.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>description</b></td>
-        <td>string</td>
-        <td>
-          Description is a human-readable description of the deployment<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>enforceParameterSchema</b></td>
-        <td>boolean</td>
-        <td>
-          EnforceParameterSchema determines if parameter schema should be enforced<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>flow_name</b></td>
-        <td>string</td>
-        <td>
-          FlowName overrides the flow name derived from the entrypoint. When set, this
-value is used instead of the function name after ":" in the entrypoint.<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#prefectdeploymentspecdeploymentglobalconcurrencylimit">globalConcurrencyLimit</a></b></td>
-        <td>object</td>
-        <td>
-          GlobalConcurrencyLimit references a global concurrency limit<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>jobVariables</b></td>
-        <td>object</td>
-        <td>
-          JobVariables are variables passed to the infrastructure<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>labels</b></td>
-        <td>map[string]string</td>
-        <td>
-          Labels are key-value pairs for additional metadata<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>parameterOpenApiSchema</b></td>
-        <td>object</td>
-        <td>
-          ParameterOpenApiSchema defines the OpenAPI schema for flow parameters<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>parameters</b></td>
-        <td>object</td>
-        <td>
-          Parameters are default parameters for flow runs<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>path</b></td>
-        <td>string</td>
-        <td>
-          Path is the path to the flow code<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>paused</b></td>
-        <td>boolean</td>
-        <td>
-          Paused indicates if the deployment is paused<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>pullSteps</b></td>
-        <td>[]object</td>
-        <td>
-          PullSteps defines steps to retrieve the flow code<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#prefectdeploymentspecdeploymentschedulesindex">schedules</a></b></td>
-        <td>[]object</td>
-        <td>
-          Schedules defines when the deployment should run<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>tags</b></td>
-        <td>[]string</td>
-        <td>
-          Tags are labels for organizing and filtering deployments<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b><a href="#prefectdeploymentspecdeploymentversioninfo">versionInfo</a></b></td>
-        <td>object</td>
-        <td>
-          VersionInfo describes the deployment version<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
-</table>
-
-
-### PrefectDeployment.spec.deployment.globalConcurrencyLimit
-<sup><sup>[↩ Parent](#prefectdeploymentspecdeployment)</sup></sup>
-
-
-
-GlobalConcurrencyLimit references a global concurrency limit
+A queue referenced by a PrefectDeployment's workQueue field is created
+implicitly by Prefect with no concurrency limit; declaring it here manages
+that limit (and priority) as config. Prefer a work-queue concurrency limit
+over a deployment-level one when run ORDER matters: workers pull from a
+queue sorted by next scheduled start time, whereas a deployment limit
+rejects the transition and re-schedules the run with a fresh timestamp,
+which loses the original ordering.
 
 <table>
     <thead>
@@ -274,180 +107,97 @@ GlobalConcurrencyLimit references a global concurrency limit
         <td><b>name</b></td>
         <td>string</td>
         <td>
-          Name is the name of the global concurrency limit<br/>
+          Name of the work queue, as referenced by a deployment's workQueue field.
+The queue is managed by (workPoolName, name), never renamed in place:
+changing this stops managing the old queue (it is left untouched in
+Prefect) and creates — or adopts, if it already exists — a queue under
+the new name.<br/>
         </td>
         <td>true</td>
       </tr><tr>
-        <td><b>active</b></td>
-        <td>boolean</td>
+        <td><b><a href="#prefectworkqueuespecserver">server</a></b></td>
+        <td>object</td>
         <td>
-          Active indicates if the limit is active<br/>
+          Server configuration for connecting to the Prefect API<br/>
         </td>
-        <td>false</td>
+        <td>true</td>
       </tr><tr>
-        <td><b>collisionStrategy</b></td>
+        <td><b>workPoolName</b></td>
         <td>string</td>
         <td>
-          CollisionStrategy defines behavior when limit is exceeded<br/>
+          WorkPoolName is the work pool this queue belongs to. A queue cannot move
+between pools, so this field is immutable.<br/>
+          <br/>
+            <i>Validations</i>:<li>self == oldSelf: workPoolName is immutable</li>
         </td>
-        <td>false</td>
+        <td>true</td>
       </tr><tr>
-        <td><b>limit</b></td>
+        <td><b>concurrencyLimit</b></td>
         <td>integer</td>
         <td>
-          Limit is the concurrency limit value<br/>
+          ConcurrencyLimit caps how many flow runs this queue may have running at
+once. Unset on create leaves the queue unlimited; removing the field
+after it has been applied clears the limit in Prefect (the operator
+tracks the last-applied field set in status and sends an explicit null).<br/>
+          <br/>
+            <i>Format</i>: int32<br/>
+            <i>Minimum</i>: 0<br/>
         </td>
         <td>false</td>
       </tr><tr>
-        <td><b>slotDecayPerSecond</b></td>
+        <td><b>description</b></td>
         <td>string</td>
         <td>
-          SlotDecayPerSecond defines how quickly slots are released<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
-</table>
-
-
-### PrefectDeployment.spec.deployment.schedules[index]
-<sup><sup>[↩ Parent](#prefectdeploymentspecdeployment)</sup></sup>
-
-
-
-PrefectSchedule defines a schedule for the deployment.
-This structure exactly matches Prefect's prefect.yaml and API format.
-Exactly one of Interval, Cron, or RRule must be specified.
-
-<table>
-    <thead>
-        <tr>
-            <th>Name</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>slug</b></td>
-        <td>string</td>
-        <td>
-          Slug is a unique identifier for the schedule
-Maps to: DeploymentScheduleCreate.slug (string)<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>active</b></td>
-        <td>boolean</td>
-        <td>
-          Active indicates if the schedule is active
-Maps to: DeploymentScheduleCreate.active (boolean, default: true)<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>anchor_date</b></td>
-        <td>string</td>
-        <td>
-          AnchorDate is the anchor date for interval schedules in RFC3339 format
-Maps to: IntervalSchedule.anchor_date (string, format: date-time)
-Example: "2024-01-01T00:00:00Z"<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>cron</b></td>
-        <td>string</td>
-        <td>
-          Cron is a valid cron expression (required for cron schedules)
-Maps to: CronSchedule.cron (string, required)
-Examples: "0 9 * * *" (daily at 9am), "*/5 * * * *" (every 5 minutes)<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>day_or</b></td>
-        <td>boolean</td>
-        <td>
-          DayOr controls how croniter handles day and day_of_week entries
-Maps to: CronSchedule.day_or (boolean, default: true)
-true = OR logic (standard cron), false = AND logic (like fcron)<br/>
+          Description of the queue. Removing the field after it has been applied
+clears it in Prefect.<br/>
         </td>
         <td>false</td>
       </tr><tr>
         <td><b>interval</b></td>
-        <td>integer</td>
-        <td>
-          Interval is the schedule interval in seconds (required for interval schedules)
-Maps to: IntervalSchedule.interval (number, required)<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>max_scheduled_runs</b></td>
-        <td>integer</td>
-        <td>
-          MaxScheduledRuns limits the number of scheduled runs
-Maps to: DeploymentScheduleCreate.max_scheduled_runs (integer > 0)<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>rrule</b></td>
         <td>string</td>
         <td>
-          RRule is a valid RFC 5545 RRULE string (required for rrule schedules)
-Maps to: RRuleSchedule.rrule (string, required)
-Examples: "RRULE:FREQ=WEEKLY;BYDAY=MO", "RRULE:FREQ=MONTHLY;BYDAY=1FR"<br/>
+          Interval is how often to re-check this work queue against the Prefect API
+to correct out-of-band drift (edits or deletes made directly in Prefect).
+Defaults to the operator's --default-resync-interval when unset. Values
+below 10s are clamped.<br/>
         </td>
         <td>false</td>
       </tr><tr>
-        <td><b>timezone</b></td>
-        <td>string</td>
+        <td><b>isPaused</b></td>
+        <td>boolean</td>
         <td>
-          Timezone for the schedule (IANA timezone string)
-Maps to: IntervalSchedule.timezone, CronSchedule.timezone, RRuleSchedule.timezone
-Examples: "America/New_York", "UTC", "Europe/London"<br/>
+          IsPaused stops the queue from serving work when true. Removing the field
+after it has been applied unpauses the queue (resets to false, the
+create-time default).<br/>
+        </td>
+        <td>false</td>
+      </tr><tr>
+        <td><b>priority</b></td>
+        <td>integer</td>
+        <td>
+          Priority of this queue within the pool; lower numbers are served first.
+Priority is POOL-WIDE state, not per-queue state: Prefect keeps
+priorities unique and sequential across the pool, so applying one here
+reshuffles the pool's other queues. Two PrefectWorkQueues in the same
+pool declaring the same priority is not rejected — Prefect renormalizes
+and the last writer wins the slot. Unlike the other optional fields,
+priority has no create-time default to restore, so removing it keeps
+the last value.<br/>
+          <br/>
+            <i>Format</i>: int32<br/>
+            <i>Minimum</i>: 1<br/>
         </td>
         <td>false</td>
       </tr></tbody>
 </table>
 
 
-### PrefectDeployment.spec.deployment.versionInfo
-<sup><sup>[↩ Parent](#prefectdeploymentspecdeployment)</sup></sup>
+### PrefectWorkQueue.spec.server
+<sup><sup>[↩ Parent](#prefectworkqueuespec)</sup></sup>
 
 
 
-VersionInfo describes the deployment version
-
-<table>
-    <thead>
-        <tr>
-            <th>Name</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>type</b></td>
-        <td>string</td>
-        <td>
-          Type is the version type (e.g., "git")<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>version</b></td>
-        <td>string</td>
-        <td>
-          Version is the version string<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
-</table>
-
-
-### PrefectDeployment.spec.server
-<sup><sup>[↩ Parent](#prefectdeploymentspec)</sup></sup>
-
-
-
-Server configuration for connecting to Prefect API
+Server configuration for connecting to the Prefect API
 
 <table>
     <thead>
@@ -466,7 +216,7 @@ Server configuration for connecting to Prefect API
         </td>
         <td>false</td>
       </tr><tr>
-        <td><b><a href="#prefectdeploymentspecserverapikey">apiKey</a></b></td>
+        <td><b><a href="#prefectworkqueuespecserverapikey">apiKey</a></b></td>
         <td>object</td>
         <td>
           APIKey is the API key to use to connect to a remote Prefect Server<br/>
@@ -504,8 +254,8 @@ Server configuration for connecting to Prefect API
 </table>
 
 
-### PrefectDeployment.spec.server.apiKey
-<sup><sup>[↩ Parent](#prefectdeploymentspecserver)</sup></sup>
+### PrefectWorkQueue.spec.server.apiKey
+<sup><sup>[↩ Parent](#prefectworkqueuespecserver)</sup></sup>
 
 
 
@@ -528,7 +278,7 @@ APIKey is the API key to use to connect to a remote Prefect Server
         </td>
         <td>false</td>
       </tr><tr>
-        <td><b><a href="#prefectdeploymentspecserverapikeyvaluefrom">valueFrom</a></b></td>
+        <td><b><a href="#prefectworkqueuespecserverapikeyvaluefrom">valueFrom</a></b></td>
         <td>object</td>
         <td>
           ValueFrom is a reference to a secret containing the API key<br/>
@@ -538,8 +288,8 @@ APIKey is the API key to use to connect to a remote Prefect Server
 </table>
 
 
-### PrefectDeployment.spec.server.apiKey.valueFrom
-<sup><sup>[↩ Parent](#prefectdeploymentspecserverapikey)</sup></sup>
+### PrefectWorkQueue.spec.server.apiKey.valueFrom
+<sup><sup>[↩ Parent](#prefectworkqueuespecserverapikey)</sup></sup>
 
 
 
@@ -555,14 +305,14 @@ ValueFrom is a reference to a secret containing the API key
         </tr>
     </thead>
     <tbody><tr>
-        <td><b><a href="#prefectdeploymentspecserverapikeyvaluefromconfigmapkeyref">configMapKeyRef</a></b></td>
+        <td><b><a href="#prefectworkqueuespecserverapikeyvaluefromconfigmapkeyref">configMapKeyRef</a></b></td>
         <td>object</td>
         <td>
           Selects a key of a ConfigMap.<br/>
         </td>
         <td>false</td>
       </tr><tr>
-        <td><b><a href="#prefectdeploymentspecserverapikeyvaluefromfieldref">fieldRef</a></b></td>
+        <td><b><a href="#prefectworkqueuespecserverapikeyvaluefromfieldref">fieldRef</a></b></td>
         <td>object</td>
         <td>
           Selects a field of the pod: supports metadata.name, metadata.namespace, `metadata.labels['<KEY>']`, `metadata.annotations['<KEY>']`,
@@ -570,7 +320,7 @@ spec.nodeName, spec.serviceAccountName, status.hostIP, status.podIP, status.podI
         </td>
         <td>false</td>
       </tr><tr>
-        <td><b><a href="#prefectdeploymentspecserverapikeyvaluefromfilekeyref">fileKeyRef</a></b></td>
+        <td><b><a href="#prefectworkqueuespecserverapikeyvaluefromfilekeyref">fileKeyRef</a></b></td>
         <td>object</td>
         <td>
           FileKeyRef selects a key of the env file.
@@ -578,7 +328,7 @@ Requires the EnvFiles feature gate to be enabled.<br/>
         </td>
         <td>false</td>
       </tr><tr>
-        <td><b><a href="#prefectdeploymentspecserverapikeyvaluefromresourcefieldref">resourceFieldRef</a></b></td>
+        <td><b><a href="#prefectworkqueuespecserverapikeyvaluefromresourcefieldref">resourceFieldRef</a></b></td>
         <td>object</td>
         <td>
           Selects a resource of the container: only resources limits and requests
@@ -586,7 +336,7 @@ Requires the EnvFiles feature gate to be enabled.<br/>
         </td>
         <td>false</td>
       </tr><tr>
-        <td><b><a href="#prefectdeploymentspecserverapikeyvaluefromsecretkeyref">secretKeyRef</a></b></td>
+        <td><b><a href="#prefectworkqueuespecserverapikeyvaluefromsecretkeyref">secretKeyRef</a></b></td>
         <td>object</td>
         <td>
           Selects a key of a secret in the pod's namespace<br/>
@@ -596,8 +346,8 @@ Requires the EnvFiles feature gate to be enabled.<br/>
 </table>
 
 
-### PrefectDeployment.spec.server.apiKey.valueFrom.configMapKeyRef
-<sup><sup>[↩ Parent](#prefectdeploymentspecserverapikeyvaluefrom)</sup></sup>
+### PrefectWorkQueue.spec.server.apiKey.valueFrom.configMapKeyRef
+<sup><sup>[↩ Parent](#prefectworkqueuespecserverapikeyvaluefrom)</sup></sup>
 
 
 
@@ -643,8 +393,8 @@ More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/nam
 </table>
 
 
-### PrefectDeployment.spec.server.apiKey.valueFrom.fieldRef
-<sup><sup>[↩ Parent](#prefectdeploymentspecserverapikeyvaluefrom)</sup></sup>
+### PrefectWorkQueue.spec.server.apiKey.valueFrom.fieldRef
+<sup><sup>[↩ Parent](#prefectworkqueuespecserverapikeyvaluefrom)</sup></sup>
 
 
 
@@ -678,8 +428,8 @@ spec.nodeName, spec.serviceAccountName, status.hostIP, status.podIP, status.podI
 </table>
 
 
-### PrefectDeployment.spec.server.apiKey.valueFrom.fileKeyRef
-<sup><sup>[↩ Parent](#prefectdeploymentspecserverapikeyvaluefrom)</sup></sup>
+### PrefectWorkQueue.spec.server.apiKey.valueFrom.fileKeyRef
+<sup><sup>[↩ Parent](#prefectworkqueuespecserverapikeyvaluefrom)</sup></sup>
 
 
 
@@ -738,8 +488,8 @@ an error will be returned during Pod creation.<br/>
 </table>
 
 
-### PrefectDeployment.spec.server.apiKey.valueFrom.resourceFieldRef
-<sup><sup>[↩ Parent](#prefectdeploymentspecserverapikeyvaluefrom)</sup></sup>
+### PrefectWorkQueue.spec.server.apiKey.valueFrom.resourceFieldRef
+<sup><sup>[↩ Parent](#prefectworkqueuespecserverapikeyvaluefrom)</sup></sup>
 
 
 
@@ -780,8 +530,8 @@ Selects a resource of the container: only resources limits and requests
 </table>
 
 
-### PrefectDeployment.spec.server.apiKey.valueFrom.secretKeyRef
-<sup><sup>[↩ Parent](#prefectdeploymentspecserverapikeyvaluefrom)</sup></sup>
+### PrefectWorkQueue.spec.server.apiKey.valueFrom.secretKeyRef
+<sup><sup>[↩ Parent](#prefectworkqueuespecserverapikeyvaluefrom)</sup></sup>
 
 
 
@@ -827,53 +577,12 @@ More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/nam
 </table>
 
 
-### PrefectDeployment.spec.workPool
-<sup><sup>[↩ Parent](#prefectdeploymentspec)</sup></sup>
+### PrefectWorkQueue.status
+<sup><sup>[↩ Parent](#prefectworkqueue)</sup></sup>
 
 
 
-WorkPool configuration specifying where the deployment should run
-
-<table>
-    <thead>
-        <tr>
-            <th>Name</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Required</th>
-        </tr>
-    </thead>
-    <tbody><tr>
-        <td><b>name</b></td>
-        <td>string</td>
-        <td>
-          Name is the name of the work pool<br/>
-        </td>
-        <td>true</td>
-      </tr><tr>
-        <td><b>namespace</b></td>
-        <td>string</td>
-        <td>
-          Namespace is the namespace containing the work pool<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>workQueue</b></td>
-        <td>string</td>
-        <td>
-          WorkQueue is the specific work queue within the work pool<br/>
-        </td>
-        <td>false</td>
-      </tr></tbody>
-</table>
-
-
-### PrefectDeployment.status
-<sup><sup>[↩ Parent](#prefectdeployment)</sup></sup>
-
-
-
-PrefectDeploymentStatus defines the observed state of PrefectDeployment
+PrefectWorkQueueStatus defines the observed state of a PrefectWorkQueue.
 
 <table>
     <thead>
@@ -888,46 +597,57 @@ PrefectDeploymentStatus defines the observed state of PrefectDeployment
         <td><b>ready</b></td>
         <td>boolean</td>
         <td>
-          Ready indicates that the deployment exists and is configured correctly<br/>
+          Ready indicates that the work queue exists and is configured correctly<br/>
         </td>
         <td>true</td>
+      </tr><tr>
+        <td><b>adopted</b></td>
+        <td>boolean</td>
+        <td>
+          Adopted is true when the managed queue already existed in Prefect when
+first reconciled (e.g. created implicitly by a deployment). Deleting the
+resource leaves an adopted queue in place; only queues this resource
+created are deleted from Prefect. Recomputed when spec.name changes.<br/>
+        </td>
+        <td>false</td>
       </tr><tr>
         <td><b>appliedFields</b></td>
         <td>[]string</td>
         <td>
-          AppliedFields records which clear-tracked spec fields the last sync
-declared, so a removed field (currently concurrencyLimit) is reset in
-Prefect instead of keeping its old value.<br/>
+          AppliedFields records which optional spec fields the last successful
+sync declared, so a field removed from the spec can be reset to its
+create-time default in Prefect instead of silently keeping its old value.<br/>
         </td>
         <td>false</td>
       </tr><tr>
-        <td><b><a href="#prefectdeploymentstatusconditionsindex">conditions</a></b></td>
+        <td><b><a href="#prefectworkqueuestatusconditionsindex">conditions</a></b></td>
         <td>[]object</td>
         <td>
-          Conditions store the status conditions of the PrefectDeployment instances<br/>
-        </td>
-        <td>false</td>
-      </tr><tr>
-        <td><b>flowId</b></td>
-        <td>string</td>
-        <td>
-          FlowId is the flow ID from Prefect<br/>
+          Conditions store the status conditions of the PrefectWorkQueue instances<br/>
         </td>
         <td>false</td>
       </tr><tr>
         <td><b>id</b></td>
         <td>string</td>
         <td>
-          Id is the deployment ID from Prefect<br/>
+          Id is the work queue ID from Prefect<br/>
         </td>
         <td>false</td>
       </tr><tr>
         <td><b>lastSyncTime</b></td>
         <td>string</td>
         <td>
-          LastSyncTime is the last time the deployment was synced with Prefect<br/>
+          LastSyncTime is the last time the work queue was synced with Prefect<br/>
           <br/>
             <i>Format</i>: date-time<br/>
+        </td>
+        <td>false</td>
+      </tr><tr>
+        <td><b>managedName</b></td>
+        <td>string</td>
+        <td>
+          ManagedName is the queue name the last successful sync managed, so a
+spec.name change is recognized as switching queues.<br/>
         </td>
         <td>false</td>
       </tr><tr>
@@ -950,8 +670,8 @@ Prefect instead of keeping its old value.<br/>
 </table>
 
 
-### PrefectDeployment.status.conditions[index]
-<sup><sup>[↩ Parent](#prefectdeploymentstatus)</sup></sup>
+### PrefectWorkQueue.status.conditions[index]
+<sup><sup>[↩ Parent](#prefectworkqueuestatus)</sup></sup>
 
 
 

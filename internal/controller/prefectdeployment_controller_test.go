@@ -112,9 +112,10 @@ var _ = Describe("PrefectDeployment controller", func() {
 
 		mockClient = prefect.NewMockClient()
 		reconciler = &PrefectDeploymentReconciler{
-			Client:        k8sClient,
-			Scheme:        k8sClient.Scheme(),
-			PrefectClient: mockClient,
+			Client:                k8sClient,
+			Scheme:                k8sClient.Scheme(),
+			PrefectClient:         mockClient,
+			DefaultResyncInterval: testResyncInterval,
 		}
 	})
 
@@ -273,6 +274,36 @@ var _ = Describe("PrefectDeployment controller", func() {
 			Expect(prefectDeployment.Status.Ready).To(BeTrue())
 		})
 
+		It("Should clear a removed concurrency limit in Prefect", func() {
+			By("Applying a concurrency limit")
+			prefectDeployment.Spec.Deployment.ConcurrencyLimit = new(2)
+			Expect(k8sClient.Update(ctx, prefectDeployment)).To(Succeed())
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: name})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(k8sClient.Get(ctx, name, prefectDeployment)).To(Succeed())
+			Expect(prefectDeployment.Status.AppliedFields).To(ConsistOf("concurrencyLimit"))
+			remote, err := mockClient.GetDeployment(ctx, *prefectDeployment.Status.Id)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(remote.GlobalConcurrencyLimit).NotTo(BeNil())
+
+			By("Removing the concurrency limit from the spec")
+			prefectDeployment.Spec.Deployment.ConcurrencyLimit = nil
+			Expect(k8sClient.Update(ctx, prefectDeployment)).To(Succeed())
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: name})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("The limit is removed in Prefect, not silently kept")
+			remote, err = mockClient.GetDeployment(ctx, *prefectDeployment.Status.Id)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(remote.GlobalConcurrencyLimit).To(BeNil())
+			Expect(remote.ConcurrencyLimit).To(BeNil())
+
+			Expect(k8sClient.Get(ctx, name, prefectDeployment)).To(Succeed())
+			Expect(prefectDeployment.Status.AppliedFields).To(BeEmpty())
+			Expect(prefectDeployment.Status.Ready).To(BeTrue())
+		})
+
 		It("Should not sync if no changes are detected", func() {
 			By("Getting the initial state")
 			initialSpecHash := prefectDeployment.Status.SpecHash
@@ -281,7 +312,7 @@ var _ = Describe("PrefectDeployment controller", func() {
 			By("Reconciling without any changes")
 			result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: name})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RequeueAfter).To(Equal(RequeueIntervalReady))
+			Expect(result.RequeueAfter).To(BeJitteredResync(testResyncInterval))
 
 			By("Checking that no sync occurred")
 			Expect(k8sClient.Get(ctx, name, prefectDeployment)).To(Succeed())

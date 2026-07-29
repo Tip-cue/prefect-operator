@@ -29,6 +29,13 @@ type PrefectDeploymentSpec struct {
 	// Server configuration for connecting to Prefect API
 	Server PrefectServerReference `json:"server"`
 
+	// Interval is how often to re-check this deployment against the Prefect API
+	// to correct out-of-band drift (edits or deletes made directly in Prefect).
+	// Defaults to the operator's --default-resync-interval when unset. Values
+	// below 10s are clamped.
+	// +optional
+	Interval *metav1.Duration `json:"interval,omitempty"`
+
 	// WorkPool configuration specifying where the deployment should run
 	WorkPool PrefectWorkPoolReference `json:"workPool"`
 
@@ -109,7 +116,8 @@ type PrefectDeploymentConfiguration struct {
 	// +optional
 	Schedules []PrefectSchedule `json:"schedules,omitempty"`
 
-	// ConcurrencyLimit limits concurrent runs of this deployment
+	// ConcurrencyLimit limits concurrent runs of this deployment. Removing
+	// the field after it has been applied removes the limit in Prefect.
 	// +optional
 	ConcurrencyLimit *int `json:"concurrencyLimit,omitempty"`
 
@@ -231,6 +239,12 @@ type PrefectDeploymentStatus struct {
 
 	// SpecHash tracks changes to the spec to minimize API calls
 	SpecHash string `json:"specHash,omitempty"`
+
+	// AppliedFields records which clear-tracked spec fields the last sync
+	// declared, so a removed field (currently concurrencyLimit) is reset in
+	// Prefect instead of keeping its old value.
+	// +optional
+	AppliedFields []string `json:"appliedFields,omitempty"`
 
 	// LastSyncTime is the last time the deployment was synced with Prefect
 	// +optional

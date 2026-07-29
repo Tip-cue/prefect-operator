@@ -18,7 +18,9 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -51,14 +53,8 @@ const (
 	// PrefectDeploymentConditionWorkPoolAvailable indicates the referenced work pool is available
 	PrefectDeploymentConditionWorkPoolAvailable = "WorkPoolAvailable"
 
-	// RequeueIntervalReady is the interval for requeuing when deployment is ready
-	RequeueIntervalReady = 10 * time.Second
-
 	// RequeueIntervalError is the interval for requeuing on errors
 	RequeueIntervalError = 30 * time.Second
-
-	// RequeueIntervalSync is the interval for requeuing during sync operations
-	RequeueIntervalSync = 10 * time.Second
 )
 
 // PrefectDeploymentReconciler reconciles a PrefectDeployment object
@@ -66,6 +62,15 @@ type PrefectDeploymentReconciler struct {
 	client.Client
 	Scheme        *runtime.Scheme
 	PrefectClient prefect.PrefectClient
+	// DefaultResyncInterval is the fallback drift-detection interval used when a
+	// PrefectDeployment does not set spec.interval.
+	DefaultResyncInterval time.Duration
+}
+
+// resyncInterval returns the effective drift-detection interval for the
+// deployment: its spec.interval when set, otherwise the operator default.
+func (r *PrefectDeploymentReconciler) resyncInterval(deployment *prefectiov1.PrefectDeployment) time.Duration {
+	return utils.ResyncInterval(deployment.Spec.Interval, r.DefaultResyncInterval)
 }
 
 //+kubebuilder:rbac:groups=prefect.io,resources=prefectdeployments,verbs=get;list;watch;create;update;patch;delete
@@ -117,7 +122,7 @@ func (r *PrefectDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		return result, nil
 	}
 
-	return ctrl.Result{RequeueAfter: RequeueIntervalReady}, nil
+	return ctrl.Result{RequeueAfter: utils.NextResyncDelay(deployment.Status.LastSyncTime, r.resyncInterval(&deployment))}, nil
 }
 
 // needsSync determines if the deployment needs to be synced with Prefect API
@@ -134,13 +139,13 @@ func (r *PrefectDeploymentReconciler) needsSync(deployment *prefectiov1.PrefectD
 		return true
 	}
 
-	// Drift detection: sync if last sync was too long ago
+	// Drift detection: re-check Prefect once the resync interval has elapsed so
+	// out-of-band edits/deletes are corrected.
 	if deployment.Status.LastSyncTime == nil {
 		return true
 	}
 
-	timeSinceLastSync := time.Since(deployment.Status.LastSyncTime.Time)
-	return timeSinceLastSync > 10*time.Minute
+	return time.Since(deployment.Status.LastSyncTime.Time) >= r.resyncInterval(deployment)
 }
 
 // syncWithPrefect syncs the deployment with the Prefect API
@@ -184,10 +189,45 @@ func (r *PrefectDeploymentReconciler) syncWithPrefect(ctx context.Context, deplo
 		return ctrl.Result{}, err
 	}
 
-	prefectDeployment, err := prefectClient.CreateOrUpdateDeployment(ctx, deploymentSpec)
+	desiredSchedules := deploymentSpec.Schedules
+	deploymentSpec.Schedules = nil
+
+	// Fields declared on the last sync (status.appliedFields) but removed from
+	// the spec are cleared in Prefect instead of keeping their old value.
+	declared := declaredDeploymentFields(deployment.Spec)
+	var clears []string
+	for _, f := range deployment.Status.AppliedFields {
+		if !slices.Contains(declared, f) {
+			clears = append(clears, f)
+		}
+	}
+
+	var prefectDeployment *prefect.Deployment
+	if deployment.Status.Id != nil && *deployment.Status.Id != "" {
+		// Skip the update when nothing changed: every update deletes the
+		// deployment's future auto-scheduled runs.
+		remote, getErr := prefectClient.GetDeployment(ctx, *deployment.Status.Id)
+		if getErr == nil && prefect.DeploymentUpToDate(remote, deploymentSpec) && prefect.DeploymentClearsApplied(remote, clears) {
+			log.Info("Prefect deployment already up to date, skipping update", "deployment", deployment.Name)
+			prefectDeployment = remote
+		} else {
+			prefectDeployment, err = prefectClient.UpdateDeployment(ctx, *deployment.Status.Id, deploymentSpec, clears)
+			if errors.Is(err, prefect.ErrDeploymentNotFound) {
+				prefectDeployment, err = prefectClient.CreateOrUpdateDeployment(ctx, deploymentSpec)
+			}
+		}
+	} else {
+		prefectDeployment, err = prefectClient.CreateOrUpdateDeployment(ctx, deploymentSpec)
+	}
 	if err != nil {
 		log.Error(err, "Failed to create or update deployment in Prefect", "deployment", deployment.Name)
 		r.setCondition(deployment, PrefectDeploymentConditionSynced, metav1.ConditionFalse, "SyncError", err.Error())
+		return ctrl.Result{}, err
+	}
+
+	if err := r.reconcileSchedules(ctx, prefectClient, prefectDeployment.ID, desiredSchedules); err != nil {
+		log.Error(err, "Failed to reconcile deployment schedules", "deployment", deployment.Name)
+		r.setCondition(deployment, PrefectDeploymentConditionSynced, metav1.ConditionFalse, "ScheduleSyncError", err.Error())
 		return ctrl.Result{}, err
 	}
 
@@ -199,7 +239,12 @@ func (r *PrefectDeploymentReconciler) syncWithPrefect(ctx context.Context, deplo
 		return ctrl.Result{}, err
 	}
 	deployment.Status.SpecHash = specHash
+	deployment.Status.AppliedFields = declared
 	deployment.Status.ObservedGeneration = deployment.Generation
+	// Stamp the sync time so needsSync gates the next Prefect re-check by the
+	// resync interval instead of hitting the API on every reconcile.
+	now := metav1.Now()
+	deployment.Status.LastSyncTime = &now
 
 	r.setCondition(deployment, PrefectDeploymentConditionSynced, metav1.ConditionTrue, "SyncSuccessful", "Deployment successfully synced with Prefect API")
 	r.setCondition(deployment, PrefectDeploymentConditionReady, metav1.ConditionTrue, "DeploymentReady", "Deployment is ready and operational")
@@ -210,7 +255,90 @@ func (r *PrefectDeploymentReconciler) syncWithPrefect(ctx context.Context, deplo
 	}
 
 	log.Info("Successfully synced deployment with Prefect", "deploymentId", prefectDeployment.ID)
-	return ctrl.Result{RequeueAfter: RequeueIntervalReady}, nil
+	return ctrl.Result{RequeueAfter: utils.JitterResyncInterval(r.resyncInterval(deployment))}, nil
+}
+
+func (r *PrefectDeploymentReconciler) reconcileSchedules(ctx context.Context, client prefect.PrefectClient, deploymentID string, desired []prefect.DeploymentSchedule) error {
+	current, err := client.GetDeployment(ctx, deploymentID)
+	if err != nil {
+		return fmt.Errorf("get current schedules: %w", err)
+	}
+
+	desiredBySlug := make(map[string]prefect.DeploymentSchedule, len(desired))
+	var toCreate []prefect.DeploymentSchedule
+	for _, d := range desired {
+		if d.Slug == nil {
+			toCreate = append(toCreate, d)
+			continue
+		}
+		desiredBySlug[*d.Slug] = d
+	}
+
+	for _, e := range current.Schedules {
+		d, ok := desiredBySlug[slugValue(e.Slug)]
+		if e.Slug == nil || !ok {
+			if err := client.DeleteDeploymentSchedule(ctx, deploymentID, e.ID); err != nil {
+				return fmt.Errorf("delete schedule: %w", err)
+			}
+			continue
+		}
+		delete(desiredBySlug, *e.Slug)
+		if scheduleNeedsUpdate(e, d) {
+			if err := client.UpdateDeploymentSchedule(ctx, deploymentID, e.ID, prefect.DeploymentScheduleUpdate{
+				Schedule:         &d.Schedule,
+				Active:           d.Active,
+				MaxScheduledRuns: d.MaxScheduledRuns,
+			}); err != nil {
+				return fmt.Errorf("update schedule: %w", err)
+			}
+		}
+	}
+
+	for _, d := range desiredBySlug {
+		toCreate = append(toCreate, d)
+	}
+	if len(toCreate) > 0 {
+		if err := client.CreateDeploymentSchedules(ctx, deploymentID, toCreate); err != nil {
+			return fmt.Errorf("create schedules: %w", err)
+		}
+	}
+	return nil
+}
+
+func slugValue(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+func scheduleNeedsUpdate(current, desired prefect.DeploymentSchedule) bool {
+	c, d := current.Schedule, desired.Schedule
+	if d.Cron != nil && (c.Cron == nil || *c.Cron != *d.Cron) {
+		return true
+	}
+	if d.RRule != nil && (c.RRule == nil || *c.RRule != *d.RRule) {
+		return true
+	}
+	if d.Interval != nil && (c.Interval == nil || *c.Interval != *d.Interval) {
+		return true
+	}
+	if d.AnchorDate != nil && (c.AnchorDate == nil || !c.AnchorDate.Equal(*d.AnchorDate)) {
+		return true
+	}
+	if d.Timezone != nil && (c.Timezone == nil || *c.Timezone != *d.Timezone) {
+		return true
+	}
+	if d.DayOr != nil && (c.DayOr == nil || *c.DayOr != *d.DayOr) {
+		return true
+	}
+	if desired.Active != nil && (current.Active == nil || *current.Active != *desired.Active) {
+		return true
+	}
+	if desired.MaxScheduledRuns != nil && (current.MaxScheduledRuns == nil || *current.MaxScheduledRuns != *desired.MaxScheduledRuns) {
+		return true
+	}
+	return false
 }
 
 // setCondition sets a condition on the deployment status
@@ -224,6 +352,16 @@ func (r *PrefectDeploymentReconciler) setCondition(deployment *prefectiov1.Prefe
 	}
 
 	meta.SetStatusCondition(&deployment.Status.Conditions, condition)
+}
+
+// declaredDeploymentFields lists the clear-tracked spec fields currently set,
+// by their CRD JSON names, for status.appliedFields.
+func declaredDeploymentFields(spec prefectiov1.PrefectDeploymentSpec) []string {
+	var fields []string
+	if spec.Deployment.ConcurrencyLimit != nil {
+		fields = append(fields, prefect.DeploymentFieldConcurrencyLimit)
+	}
+	return fields
 }
 
 // handleDeletion handles the cleanup of a PrefectDeployment that is being deleted

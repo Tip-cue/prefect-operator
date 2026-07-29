@@ -32,6 +32,7 @@ type MockClient struct {
 	deployments map[string]*Deployment
 	flows       map[string]*Flow
 	workPools   map[string]*WorkPool
+	workQueues  map[string]*WorkQueue
 	automations map[string]*Automation
 
 	// Test configuration
@@ -41,6 +42,14 @@ type MockClient struct {
 	ShouldFailDelete     bool
 	ShouldFailFlowCreate bool
 	FailureMessage       string
+
+	// UpdateScheduleCalls counts UpdateDeploymentSchedule calls, so tests can
+	// assert that unchanged schedules are not PATCHed
+	UpdateScheduleCalls int
+
+	// UpdateWorkQueueCalls counts UpdateWorkQueue calls, so tests can assert
+	// that an already-matching queue is not PATCHed
+	UpdateWorkQueueCalls int
 }
 
 // NewMockClient creates a new mock Prefect client
@@ -49,6 +58,7 @@ func NewMockClient() *MockClient {
 		deployments: make(map[string]*Deployment),
 		flows:       make(map[string]*Flow),
 		workPools:   make(map[string]*WorkPool),
+		workQueues:  make(map[string]*WorkQueue),
 		automations: make(map[string]*Automation),
 	}
 }
@@ -101,7 +111,7 @@ func (m *MockClient) UpdateAutomation(ctx context.Context, id string, automation
 	defer m.mu.Unlock()
 	existing, ok := m.automations[id]
 	if !ok {
-		return nil, fmt.Errorf("automation %s not found", id)
+		return nil, fmt.Errorf("automation %s: %w", id, ErrAutomationNotFound)
 	}
 	existing.Name = automation.Name
 	existing.Description = automation.Description
@@ -279,7 +289,7 @@ func (m *MockClient) GetDeploymentByName(ctx context.Context, name, flowID strin
 }
 
 // UpdateDeployment updates an existing deployment in the mock store
-func (m *MockClient) UpdateDeployment(ctx context.Context, id string, deployment *DeploymentSpec) (*Deployment, error) {
+func (m *MockClient) UpdateDeployment(ctx context.Context, id string, deployment *DeploymentSpec, clearFields []string) (*Deployment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -300,7 +310,17 @@ func (m *MockClient) UpdateDeployment(ctx context.Context, id string, deployment
 		existing.Paused = *deployment.Paused
 	}
 	existing.Schedules = deployment.Schedules
-	existing.ConcurrencyLimit = deployment.ConcurrencyLimit
+	// Match the real API's exclude_unset semantics: omitted limit unchanged.
+	if deployment.ConcurrencyLimit != nil {
+		existing.ConcurrencyLimit = deployment.ConcurrencyLimit
+		existing.GlobalConcurrencyLimit = &GlobalConcurrencyLimit{Limit: *deployment.ConcurrencyLimit}
+	}
+	for _, f := range clearFields {
+		if f == DeploymentFieldConcurrencyLimit {
+			existing.ConcurrencyLimit = nil
+			existing.GlobalConcurrencyLimit = nil
+		}
+	}
 	existing.GlobalConcurrencyLimits = deployment.GlobalConcurrencyLimits
 	existing.Entrypoint = deployment.Entrypoint
 	existing.Path = deployment.Path
@@ -323,6 +343,84 @@ func (m *MockClient) DeleteDeployment(ctx context.Context, deploymentID string) 
 	defer m.mu.Unlock()
 
 	delete(m.deployments, deploymentID)
+	return nil
+}
+
+func (m *MockClient) CreateDeploymentSchedules(ctx context.Context, deploymentID string, schedules []DeploymentSchedule) error {
+	if m.ShouldFailUpdate {
+		return fmt.Errorf("mock error: %s", m.FailureMessage)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d, ok := m.deployments[deploymentID]
+	if !ok {
+		return fmt.Errorf("mock error: deployment %s not found", deploymentID)
+	}
+	for _, s := range schedules {
+		if s.Slug != nil {
+			for _, ex := range d.Schedules {
+				if ex.Slug != nil && *ex.Slug == *s.Slug {
+					return fmt.Errorf("mock error: schedule slug %q already exists (409)", *s.Slug)
+				}
+			}
+		}
+		if s.ID == "" {
+			if s.Slug != nil {
+				s.ID = "sched-" + *s.Slug
+			} else {
+				s.ID = fmt.Sprintf("sched-%d", len(d.Schedules))
+			}
+		}
+		d.Schedules = append(d.Schedules, s)
+	}
+	return nil
+}
+
+func (m *MockClient) UpdateDeploymentSchedule(ctx context.Context, deploymentID, scheduleID string, update DeploymentScheduleUpdate) error {
+	if m.ShouldFailUpdate {
+		return fmt.Errorf("mock error: %s", m.FailureMessage)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.UpdateScheduleCalls++
+	d, ok := m.deployments[deploymentID]
+	if !ok {
+		return fmt.Errorf("mock error: deployment %s not found", deploymentID)
+	}
+	for i := range d.Schedules {
+		if d.Schedules[i].ID == scheduleID {
+			if update.Schedule != nil {
+				d.Schedules[i].Schedule = *update.Schedule
+			}
+			if update.Active != nil {
+				d.Schedules[i].Active = update.Active
+			}
+			if update.MaxScheduledRuns != nil {
+				d.Schedules[i].MaxScheduledRuns = update.MaxScheduledRuns
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("mock error: schedule %s not found", scheduleID)
+}
+
+func (m *MockClient) DeleteDeploymentSchedule(ctx context.Context, deploymentID, scheduleID string) error {
+	if m.ShouldFailDelete {
+		return fmt.Errorf("mock error: %s", m.FailureMessage)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d, ok := m.deployments[deploymentID]
+	if !ok {
+		return fmt.Errorf("mock error: deployment %s not found", deploymentID)
+	}
+	kept := make([]DeploymentSchedule, 0, len(d.Schedules))
+	for _, s := range d.Schedules {
+		if s.ID != scheduleID {
+			kept = append(kept, s)
+		}
+	}
+	d.Schedules = kept
 	return nil
 }
 
@@ -623,4 +721,115 @@ func (m *MockClient) GetWorkerMetadata(ctx context.Context) (map[string]WorkerMe
 	return map[string]WorkerMetadata{
 		"kubernetes": {DefaultBaseJobTemplate: MockDefaultBaseJobTemplate},
 	}, nil
+}
+
+func workQueueKey(workPoolName, name string) string {
+	return workPoolName + "/" + name
+}
+
+// GetWorkQueue returns a stored work queue by pool and name, or (nil, nil) when absent.
+func (m *MockClient) GetWorkQueue(ctx context.Context, workPoolName, name string) (*WorkQueue, error) {
+	if m.ShouldFailGet {
+		return nil, fmt.Errorf("mock error: %s", m.FailureMessage)
+	}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	queue, ok := m.workQueues[workQueueKey(workPoolName, name)]
+	if !ok {
+		return nil, nil
+	}
+	copied := *queue
+	return &copied, nil
+}
+
+// CreateWorkQueue stores a new work queue in the mock store. Like the real
+// pool-scoped route, it fails with ErrWorkPoolNotFound when the pool does not
+// exist — seed the pool with CreateWorkPool first.
+func (m *MockClient) CreateWorkQueue(ctx context.Context, workPoolName string, queue *WorkQueueSpec) (*WorkQueue, error) {
+	if m.ShouldFailCreate {
+		return nil, fmt.Errorf("mock error: %s", m.FailureMessage)
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if _, ok := m.workPools[workPoolName]; !ok {
+		return nil, fmt.Errorf("work pool %q: %w", workPoolName, ErrWorkPoolNotFound)
+	}
+
+	created := &WorkQueue{
+		ID:               uuid.NewString(),
+		Name:             queue.Name,
+		Description:      queue.Description,
+		IsPaused:         queue.IsPaused,
+		ConcurrencyLimit: queue.ConcurrencyLimit,
+		Priority:         queue.Priority,
+		WorkPoolName:     workPoolName,
+	}
+	m.workQueues[workQueueKey(workPoolName, queue.Name)] = created
+
+	copied := *created
+	return &copied, nil
+}
+
+// UpdateWorkQueue updates a stored work queue by pool and name. Only fields
+// set in the spec are applied, matching the exclude_unset PATCH semantics of
+// the real API; clearFields reset fields to their create-time defaults.
+func (m *MockClient) UpdateWorkQueue(ctx context.Context, workPoolName, name string, queue *WorkQueueSpec, clearFields []string) error {
+	if m.ShouldFailUpdate {
+		return fmt.Errorf("mock error: %s", m.FailureMessage)
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.UpdateWorkQueueCalls++
+
+	existing, ok := m.workQueues[workQueueKey(workPoolName, name)]
+	if !ok {
+		return fmt.Errorf("work queue %q in pool %q: %w", name, workPoolName, ErrWorkQueueNotFound)
+	}
+
+	if queue.Description != nil {
+		existing.Description = queue.Description
+	}
+	if queue.IsPaused != nil {
+		existing.IsPaused = queue.IsPaused
+	}
+	if queue.ConcurrencyLimit != nil {
+		existing.ConcurrencyLimit = queue.ConcurrencyLimit
+	}
+	if queue.Priority != nil {
+		existing.Priority = queue.Priority
+	}
+	for _, f := range clearFields {
+		switch f {
+		case WorkQueueFieldConcurrencyLimit:
+			existing.ConcurrencyLimit = nil
+		case WorkQueueFieldDescription:
+			// NOT NULL column; the create-time default is "".
+			empty := ""
+			existing.Description = &empty
+		case WorkQueueFieldIsPaused:
+			paused := false
+			existing.IsPaused = &paused
+		}
+	}
+	return nil
+}
+
+// DeleteWorkQueue removes a stored work queue by pool and name; absent queues
+// are a no-op, matching the idempotent-delete contract of the real client.
+func (m *MockClient) DeleteWorkQueue(ctx context.Context, workPoolName, name string) error {
+	if m.ShouldFailDelete {
+		return fmt.Errorf("mock error: %s", m.FailureMessage)
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	delete(m.workQueues, workQueueKey(workPoolName, name))
+	return nil
 }

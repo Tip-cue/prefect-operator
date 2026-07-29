@@ -4,35 +4,43 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.21.0
-  name: prefectdeployments.prefect.io
+  name: prefectworkqueues.prefect.io
 spec:
   group: prefect.io
   names:
-    kind: PrefectDeployment
-    listKind: PrefectDeploymentList
-    plural: prefectdeployments
+    kind: PrefectWorkQueue
+    listKind: PrefectWorkQueueList
+    plural: prefectworkqueues
     shortNames:
-    - pd
-    singular: prefectdeployment
+    - pwq
+    singular: prefectworkqueue
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - description: Whether this Prefect deployment is ready
+    - description: The Prefect work queue name
+      jsonPath: .spec.name
+      name: Queue
+      type: string
+    - description: The work pool this queue belongs to
+      jsonPath: .spec.workPoolName
+      name: Work Pool
+      type: string
+    - description: The declared concurrency limit
+      jsonPath: .spec.concurrencyLimit
+      name: Concurrency
+      type: integer
+    - description: Whether this Prefect work queue is ready
       jsonPath: .status.ready
       name: Ready
       type: boolean
-    - description: The Prefect deployment ID
+    - description: The Prefect work queue ID
       jsonPath: .status.id
       name: ID
-      type: string
-    - description: The work pool for this deployment
-      jsonPath: .spec.workPool.name
-      name: WorkPool
       type: string
     name: v1
     schema:
       openAPIV3Schema:
-        description: PrefectDeployment is the Schema for the prefectdeployments API
+        description: PrefectWorkQueue is the Schema for the prefectworkqueues API
         properties:
           apiVersion:
             description: |-
@@ -52,181 +60,69 @@ spec:
           metadata:
             type: object
           spec:
-            description: PrefectDeploymentSpec defines the desired state of a PrefectDeployment
+            description: |-
+              PrefectWorkQueueSpec defines the desired state of a PrefectWorkQueue.
+              It mirrors the options of the Prefect Terraform provider's prefect_work_queue
+              resource so work queues can be managed declaratively via the operator.
+
+              A queue referenced by a PrefectDeployment's workQueue field is created
+              implicitly by Prefect with no concurrency limit; declaring it here manages
+              that limit (and priority) as config. Prefer a work-queue concurrency limit
+              over a deployment-level one when run ORDER matters: workers pull from a
+              queue sorted by next scheduled start time, whereas a deployment limit
+              rejects the transition and re-schedules the run with a fresh timestamp,
+              which loses the original ordering.
             properties:
-              deployment:
-                description: Deployment configuration defining the Prefect deployment
-                properties:
-                  concurrencyLimit:
-                    description: |-
-                      ConcurrencyLimit limits concurrent runs of this deployment. Removing
-                      the field after it has been applied removes the limit in Prefect.
-                    type: integer
-                  description:
-                    description: Description is a human-readable description of the
-                      deployment
-                    type: string
-                  enforceParameterSchema:
-                    description: EnforceParameterSchema determines if parameter schema
-                      should be enforced
-                    type: boolean
-                  entrypoint:
-                    description: Entrypoint is the entrypoint for the flow (e.g.,
-                      "my_code.py:my_function")
-                    type: string
-                  flow_name:
-                    description: |-
-                      FlowName overrides the flow name derived from the entrypoint. When set, this
-                      value is used instead of the function name after ":" in the entrypoint.
-                    type: string
-                  globalConcurrencyLimit:
-                    description: GlobalConcurrencyLimit references a global concurrency
-                      limit
-                    properties:
-                      active:
-                        description: Active indicates if the limit is active
-                        type: boolean
-                      collisionStrategy:
-                        description: CollisionStrategy defines behavior when limit
-                          is exceeded
-                        type: string
-                      limit:
-                        description: Limit is the concurrency limit value
-                        type: integer
-                      name:
-                        description: Name is the name of the global concurrency limit
-                        type: string
-                      slotDecayPerSecond:
-                        description: SlotDecayPerSecond defines how quickly slots
-                          are released
-                        type: string
-                    required:
-                    - name
-                    type: object
-                  jobVariables:
-                    description: JobVariables are variables passed to the infrastructure
-                    type: object
-                    x-kubernetes-preserve-unknown-fields: true
-                  labels:
-                    additionalProperties:
-                      type: string
-                    description: Labels are key-value pairs for additional metadata
-                    type: object
-                  parameterOpenApiSchema:
-                    description: ParameterOpenApiSchema defines the OpenAPI schema
-                      for flow parameters
-                    type: object
-                    x-kubernetes-preserve-unknown-fields: true
-                  parameters:
-                    description: Parameters are default parameters for flow runs
-                    type: object
-                    x-kubernetes-preserve-unknown-fields: true
-                  path:
-                    description: Path is the path to the flow code
-                    type: string
-                  paused:
-                    description: Paused indicates if the deployment is paused
-                    type: boolean
-                  pullSteps:
-                    description: PullSteps defines steps to retrieve the flow code
-                    items:
-                      type: object
-                      x-kubernetes-preserve-unknown-fields: true
-                    type: array
-                  schedules:
-                    description: Schedules defines when the deployment should run
-                    items:
-                      description: |-
-                        PrefectSchedule defines a schedule for the deployment.
-                        This structure exactly matches Prefect's prefect.yaml and API format.
-                        Exactly one of Interval, Cron, or RRule must be specified.
-                      properties:
-                        active:
-                          description: |-
-                            Active indicates if the schedule is active
-                            Maps to: DeploymentScheduleCreate.active (boolean, default: true)
-                          type: boolean
-                        anchor_date:
-                          description: |-
-                            AnchorDate is the anchor date for interval schedules in RFC3339 format
-                            Maps to: IntervalSchedule.anchor_date (string, format: date-time)
-                            Example: "2024-01-01T00:00:00Z"
-                          type: string
-                        cron:
-                          description: |-
-                            Cron is a valid cron expression (required for cron schedules)
-                            Maps to: CronSchedule.cron (string, required)
-                            Examples: "0 9 * * *" (daily at 9am), "*/5 * * * *" (every 5 minutes)
-                          type: string
-                        day_or:
-                          description: |-
-                            DayOr controls how croniter handles day and day_of_week entries
-                            Maps to: CronSchedule.day_or (boolean, default: true)
-                            true = OR logic (standard cron), false = AND logic (like fcron)
-                          type: boolean
-                        interval:
-                          description: |-
-                            Interval is the schedule interval in seconds (required for interval schedules)
-                            Maps to: IntervalSchedule.interval (number, required)
-                          type: integer
-                        max_scheduled_runs:
-                          description: |-
-                            MaxScheduledRuns limits the number of scheduled runs
-                            Maps to: DeploymentScheduleCreate.max_scheduled_runs (integer > 0)
-                          type: integer
-                        rrule:
-                          description: |-
-                            RRule is a valid RFC 5545 RRULE string (required for rrule schedules)
-                            Maps to: RRuleSchedule.rrule (string, required)
-                            Examples: "RRULE:FREQ=WEEKLY;BYDAY=MO", "RRULE:FREQ=MONTHLY;BYDAY=1FR"
-                          type: string
-                        slug:
-                          description: |-
-                            Slug is a unique identifier for the schedule
-                            Maps to: DeploymentScheduleCreate.slug (string)
-                          type: string
-                        timezone:
-                          description: |-
-                            Timezone for the schedule (IANA timezone string)
-                            Maps to: IntervalSchedule.timezone, CronSchedule.timezone, RRuleSchedule.timezone
-                            Examples: "America/New_York", "UTC", "Europe/London"
-                          type: string
-                      required:
-                      - slug
-                      type: object
-                    type: array
-                  tags:
-                    description: Tags are labels for organizing and filtering deployments
-                    items:
-                      type: string
-                    type: array
-                  versionInfo:
-                    description: VersionInfo describes the deployment version
-                    properties:
-                      type:
-                        description: Type is the version type (e.g., "git")
-                        type: string
-                      version:
-                        description: Version is the version string
-                        type: string
-                    type: object
-                required:
-                - entrypoint
-                type: object
-                x-kubernetes-validations:
-                - message: flow_name is immutable; delete and recreate the deployment
-                    to change the flow
-                  rule: '!has(self.flow_name) || !has(oldSelf.flow_name) || self.flow_name
-                    == oldSelf.flow_name'
+              concurrencyLimit:
+                description: |-
+                  ConcurrencyLimit caps how many flow runs this queue may have running at
+                  once. Unset on create leaves the queue unlimited; removing the field
+                  after it has been applied clears the limit in Prefect (the operator
+                  tracks the last-applied field set in status and sends an explicit null).
+                format: int32
+                minimum: 0
+                type: integer
+              description:
+                description: |-
+                  Description of the queue. Removing the field after it has been applied
+                  clears it in Prefect.
+                type: string
               interval:
                 description: |-
-                  Interval is how often to re-check this deployment against the Prefect API
+                  Interval is how often to re-check this work queue against the Prefect API
                   to correct out-of-band drift (edits or deletes made directly in Prefect).
                   Defaults to the operator's --default-resync-interval when unset. Values
                   below 10s are clamped.
                 type: string
+              isPaused:
+                description: |-
+                  IsPaused stops the queue from serving work when true. Removing the field
+                  after it has been applied unpauses the queue (resets to false, the
+                  create-time default).
+                type: boolean
+              name:
+                description: |-
+                  Name of the work queue, as referenced by a deployment's workQueue field.
+                  The queue is managed by (workPoolName, name), never renamed in place:
+                  changing this stops managing the old queue (it is left untouched in
+                  Prefect) and creates — or adopts, if it already exists — a queue under
+                  the new name.
+                type: string
+              priority:
+                description: |-
+                  Priority of this queue within the pool; lower numbers are served first.
+                  Priority is POOL-WIDE state, not per-queue state: Prefect keeps
+                  priorities unique and sequential across the pool, so applying one here
+                  reshuffles the pool's other queues. Two PrefectWorkQueues in the same
+                  pool declaring the same priority is not rejected — Prefect renormalizes
+                  and the last writer wins the slot. Unlike the other optional fields,
+                  priority has no create-time default to restore, so removing it keeps
+                  the last value.
+                format: int32
+                minimum: 1
+                type: integer
               server:
-                description: Server configuration for connecting to Prefect API
+                description: Server configuration for connecting to the Prefect API
                 properties:
                   accountId:
                     description: AccountID is the ID of the account to use to connect
@@ -388,41 +284,39 @@ spec:
                       connect to Prefect Cloud
                     type: string
                 type: object
-              workPool:
-                description: WorkPool configuration specifying where the deployment
-                  should run
-                properties:
-                  name:
-                    description: Name is the name of the work pool
-                    type: string
-                  namespace:
-                    description: Namespace is the namespace containing the work pool
-                    type: string
-                  workQueue:
-                    description: WorkQueue is the specific work queue within the work
-                      pool
-                    type: string
-                required:
-                - name
-                type: object
+              workPoolName:
+                description: |-
+                  WorkPoolName is the work pool this queue belongs to. A queue cannot move
+                  between pools, so this field is immutable.
+                type: string
+                x-kubernetes-validations:
+                - message: workPoolName is immutable
+                  rule: self == oldSelf
             required:
-            - deployment
+            - name
             - server
-            - workPool
+            - workPoolName
             type: object
           status:
-            description: PrefectDeploymentStatus defines the observed state of PrefectDeployment
+            description: PrefectWorkQueueStatus defines the observed state of a PrefectWorkQueue.
             properties:
+              adopted:
+                description: |-
+                  Adopted is true when the managed queue already existed in Prefect when
+                  first reconciled (e.g. created implicitly by a deployment). Deleting the
+                  resource leaves an adopted queue in place; only queues this resource
+                  created are deleted from Prefect. Recomputed when spec.name changes.
+                type: boolean
               appliedFields:
                 description: |-
-                  AppliedFields records which clear-tracked spec fields the last sync
-                  declared, so a removed field (currently concurrencyLimit) is reset in
-                  Prefect instead of keeping its old value.
+                  AppliedFields records which optional spec fields the last successful
+                  sync declared, so a field removed from the spec can be reset to its
+                  create-time default in Prefect instead of silently keeping its old value.
                 items:
                   type: string
                 type: array
               conditions:
-                description: Conditions store the status conditions of the PrefectDeployment
+                description: Conditions store the status conditions of the PrefectWorkQueue
                   instances
                 items:
                   description: Condition contains details for one aspect of the current
@@ -479,23 +373,25 @@ spec:
                   - type
                   type: object
                 type: array
-              flowId:
-                description: FlowId is the flow ID from Prefect
-                type: string
               id:
-                description: Id is the deployment ID from Prefect
+                description: Id is the work queue ID from Prefect
                 type: string
               lastSyncTime:
-                description: LastSyncTime is the last time the deployment was synced
+                description: LastSyncTime is the last time the work queue was synced
                   with Prefect
                 format: date-time
+                type: string
+              managedName:
+                description: |-
+                  ManagedName is the queue name the last successful sync managed, so a
+                  spec.name change is recognized as switching queues.
                 type: string
               observedGeneration:
                 description: ObservedGeneration tracks the last processed generation
                 format: int64
                 type: integer
               ready:
-                description: Ready indicates that the deployment exists and is configured
+                description: Ready indicates that the work queue exists and is configured
                   correctly
                 type: boolean
               specHash:

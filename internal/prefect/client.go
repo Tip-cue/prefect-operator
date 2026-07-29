@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -32,6 +33,10 @@ import (
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+// ErrDeploymentNotFound is returned when a deployment no longer exists in Prefect
+// (e.g. deleted in the UI), so callers can fall back to recreating it.
+var ErrDeploymentNotFound = errors.New("deployment not found")
 
 // isSuccessStatusCode returns true if the HTTP status code indicates success (2xx range)
 func isSuccessStatusCode(statusCode int) bool {
@@ -46,10 +51,15 @@ type PrefectClient interface {
 	GetDeployment(ctx context.Context, id string) (*Deployment, error)
 	// GetDeploymentByName retrieves a deployment by name and flow ID
 	GetDeploymentByName(ctx context.Context, name, flowID string) (*Deployment, error)
-	// UpdateDeployment updates an existing deployment
-	UpdateDeployment(ctx context.Context, id string, deployment *DeploymentSpec) (*Deployment, error)
+	// UpdateDeployment updates an existing deployment; clearFields resets
+	// previously-declared fields (e.g. the concurrency limit) instead of
+	// leaving them untouched
+	UpdateDeployment(ctx context.Context, id string, deployment *DeploymentSpec, clearFields []string) (*Deployment, error)
 	// DeleteDeployment deletes a deployment
 	DeleteDeployment(ctx context.Context, id string) error
+	CreateDeploymentSchedules(ctx context.Context, deploymentID string, schedules []DeploymentSchedule) error
+	UpdateDeploymentSchedule(ctx context.Context, deploymentID, scheduleID string, update DeploymentScheduleUpdate) error
+	DeleteDeploymentSchedule(ctx context.Context, deploymentID, scheduleID string) error
 	// CreateOrGetFlow creates a new flow or returns an existing one with the same name
 	CreateOrGetFlow(ctx context.Context, flow *FlowSpec) (*Flow, error)
 	// GetFlowByName retrieves a flow by name
@@ -62,6 +72,15 @@ type PrefectClient interface {
 	UpdateWorkPool(ctx context.Context, name string, workPool *WorkPoolSpec) error
 	// DeleteWorkPool deletes a work pool
 	DeleteWorkPool(ctx context.Context, id string) error
+	// GetWorkQueue retrieves a work queue within a pool by name; nil when absent
+	GetWorkQueue(ctx context.Context, workPoolName, name string) (*WorkQueue, error)
+	// CreateWorkQueue creates a work queue within a pool
+	CreateWorkQueue(ctx context.Context, workPoolName string, queue *WorkQueueSpec) (*WorkQueue, error)
+	// UpdateWorkQueue updates a work queue in place; clearFields resets
+	// previously-declared fields to their create-time defaults
+	UpdateWorkQueue(ctx context.Context, workPoolName, name string, queue *WorkQueueSpec, clearFields []string) error
+	// DeleteWorkQueue deletes a work queue within a pool by name
+	DeleteWorkQueue(ctx context.Context, workPoolName, name string) error
 	// GetWorkerMetadata retrieves aggregate metadata for all worker types
 	GetWorkerMetadata(ctx context.Context) (map[string]WorkerMetadata, error)
 	// CreateAutomation creates a new automation
@@ -189,28 +208,35 @@ type DeploymentSpec struct {
 
 // Deployment represents a Prefect deployment
 type Deployment struct {
-	ID                      string               `json:"id"`
-	Created                 time.Time            `json:"created"`
-	Updated                 time.Time            `json:"updated"`
-	Name                    string               `json:"name"`
-	Version                 *string              `json:"version"`
-	Description             *string              `json:"description"`
-	FlowID                  string               `json:"flow_id"`
-	Paused                  bool                 `json:"paused"`
-	Tags                    []string             `json:"tags"`
-	Parameters              map[string]any       `json:"parameters"`
-	JobVariables            map[string]any       `json:"job_variables"`
-	WorkQueueName           *string              `json:"work_queue_name"`
-	WorkPoolName            *string              `json:"work_pool_name"`
-	Status                  string               `json:"status"`
-	Schedules               []DeploymentSchedule `json:"schedules"`
-	ConcurrencyLimit        *int                 `json:"concurrency_limit"`
-	GlobalConcurrencyLimits []string             `json:"global_concurrency_limits"`
-	Entrypoint              *string              `json:"entrypoint"`
-	Path                    *string              `json:"path"`
-	PullSteps               []map[string]any     `json:"pull_steps"`
-	ParameterOpenAPISchema  map[string]any       `json:"parameter_openapi_schema"`
-	EnforceParameterSchema  bool                 `json:"enforce_parameter_schema"`
+	ID                      string                  `json:"id"`
+	Created                 time.Time               `json:"created"`
+	Updated                 time.Time               `json:"updated"`
+	Name                    string                  `json:"name"`
+	Version                 *string                 `json:"version"`
+	Description             *string                 `json:"description"`
+	FlowID                  string                  `json:"flow_id"`
+	Paused                  bool                    `json:"paused"`
+	Tags                    []string                `json:"tags"`
+	Parameters              map[string]any          `json:"parameters"`
+	JobVariables            map[string]any          `json:"job_variables"`
+	WorkQueueName           *string                 `json:"work_queue_name"`
+	WorkPoolName            *string                 `json:"work_pool_name"`
+	Status                  string                  `json:"status"`
+	Schedules               []DeploymentSchedule    `json:"schedules"`
+	ConcurrencyLimit        *int                    `json:"concurrency_limit"`
+	GlobalConcurrencyLimit  *GlobalConcurrencyLimit `json:"global_concurrency_limit,omitempty"`
+	GlobalConcurrencyLimits []string                `json:"global_concurrency_limits"`
+	Entrypoint              *string                 `json:"entrypoint"`
+	Path                    *string                 `json:"path"`
+	PullSteps               []map[string]any        `json:"pull_steps"`
+	ParameterOpenAPISchema  map[string]any          `json:"parameter_openapi_schema"`
+	EnforceParameterSchema  bool                    `json:"enforce_parameter_schema"`
+}
+
+// GlobalConcurrencyLimit carries the deployment's live concurrency limit;
+// the deprecated top-level concurrency_limit response field is always null.
+type GlobalConcurrencyLimit struct {
+	Limit int `json:"limit"`
 }
 
 // Schedule represents a Prefect deployment schedule.
@@ -243,7 +269,7 @@ type Schedule struct {
 // DeploymentSchedule represents a deployment schedule in the Prefect API.
 // This matches the DeploymentScheduleCreate schema which wraps the schedule object.
 type DeploymentSchedule struct {
-	// Slug is a unique identifier for the schedule
+	ID   string  `json:"id,omitempty"`
 	Slug *string `json:"slug,omitempty"`
 
 	// Schedule contains the actual schedule configuration (interval, cron, or rrule)
@@ -397,14 +423,35 @@ func (c *Client) GetDeploymentByName(ctx context.Context, name, flowID string) (
 	return nil, fmt.Errorf("GetDeploymentByName not yet implemented - use GetDeployment with ID")
 }
 
-// UpdateDeployment updates an existing deployment
-func (c *Client) UpdateDeployment(ctx context.Context, id string, deployment *DeploymentSpec) (*Deployment, error) {
-	url := fmt.Sprintf("%s/deployments/%s", c.BaseURL, id)
-	c.log.V(1).Info("Updating deployment", "url", url, "deploymentId", id)
+// DeploymentFieldConcurrencyLimit is the CRD JSON name of the concurrency
+// limit, used in clearFields and status.appliedFields.
+const DeploymentFieldConcurrencyLimit = "concurrencyLimit"
 
-	jsonData, err := json.Marshal(deployment)
+// UpdateDeployment updates an existing deployment. Updates apply with
+// exclude_unset semantics, so clearing a field needs its explicit null —
+// clearFields names the fields to reset.
+func (c *Client) UpdateDeployment(ctx context.Context, id string, deployment *DeploymentSpec, clearFields []string) (*Deployment, error) {
+	url := fmt.Sprintf("%s/deployments/%s", c.BaseURL, id)
+	c.log.V(1).Info("Updating deployment", "url", url, "deploymentId", id, "clearFields", clearFields)
+
+	raw, err := json.Marshal(deployment)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal deployment updates: %w", err)
+	}
+	var updateBody map[string]any
+	if err := json.Unmarshal(raw, &updateBody); err != nil {
+		return nil, fmt.Errorf("failed to prepare deployment update body: %w", err)
+	}
+	delete(updateBody, "name")
+	delete(updateBody, "flow_id")
+	for _, f := range clearFields {
+		if f == DeploymentFieldConcurrencyLimit {
+			updateBody["concurrency_limit"] = nil
+		}
+	}
+	jsonData, err := json.Marshal(updateBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal deployment update body: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "PATCH", url, bytes.NewBuffer(jsonData))
@@ -432,8 +479,15 @@ func (c *Client) UpdateDeployment(ctx context.Context, id string, deployment *De
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
 
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, ErrDeploymentNotFound
+	}
 	if !isSuccessStatusCode(resp.StatusCode) {
 		return nil, fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	if resp.StatusCode == http.StatusNoContent || len(bytes.TrimSpace(body)) == 0 {
+		return c.GetDeployment(ctx, id)
 	}
 
 	var result Deployment
@@ -476,6 +530,65 @@ func (c *Client) DeleteDeployment(ctx context.Context, id string) error {
 
 	c.log.V(1).Info("Deployment deleted successfully", "deploymentId", id)
 	return nil
+}
+
+type DeploymentScheduleUpdate struct {
+	Schedule         *Schedule `json:"schedule,omitempty"`
+	Active           *bool     `json:"active,omitempty"`
+	MaxScheduledRuns *int      `json:"max_scheduled_runs,omitempty"`
+}
+
+func (c *Client) scheduleSubResource(ctx context.Context, method, url string, jsonData []byte) error {
+	var bodyReader io.Reader
+	if jsonData != nil {
+		bodyReader = bytes.NewBuffer(jsonData)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	if jsonData != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if c.APIKey != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.APIKey))
+	}
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to make request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response body: %w", err)
+	}
+	if !isSuccessStatusCode(resp.StatusCode) {
+		return fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(body))
+	}
+	return nil
+}
+
+func (c *Client) CreateDeploymentSchedules(ctx context.Context, deploymentID string, schedules []DeploymentSchedule) error {
+	url := fmt.Sprintf("%s/deployments/%s/schedules", c.BaseURL, deploymentID)
+	jsonData, err := json.Marshal(schedules)
+	if err != nil {
+		return fmt.Errorf("failed to marshal schedules: %w", err)
+	}
+	return c.scheduleSubResource(ctx, "POST", url, jsonData)
+}
+
+func (c *Client) UpdateDeploymentSchedule(ctx context.Context, deploymentID, scheduleID string, update DeploymentScheduleUpdate) error {
+	url := fmt.Sprintf("%s/deployments/%s/schedules/%s", c.BaseURL, deploymentID, scheduleID)
+	jsonData, err := json.Marshal(update)
+	if err != nil {
+		return fmt.Errorf("failed to marshal schedule update: %w", err)
+	}
+	return c.scheduleSubResource(ctx, "PATCH", url, jsonData)
+}
+
+func (c *Client) DeleteDeploymentSchedule(ctx context.Context, deploymentID, scheduleID string) error {
+	url := fmt.Sprintf("%s/deployments/%s/schedules/%s", c.BaseURL, deploymentID, scheduleID)
+	return c.scheduleSubResource(ctx, "DELETE", url, nil)
 }
 
 // CreateOrGetFlow creates a new flow or returns an existing one with the same name

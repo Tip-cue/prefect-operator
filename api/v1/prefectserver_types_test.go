@@ -312,6 +312,41 @@ var _ = Describe("PrefectServer type", func() {
 			Expect(envVars).To(ConsistOf(expectedEnvVars))
 		})
 
+		It("should configure Redis lease storage when leaseStorage is enabled", func() {
+			server := &PrefectServer{
+				Spec: PrefectServerSpec{
+					Redis: &RedisConfiguration{
+						Host:         new("redis.example.com"),
+						LeaseStorage: new(true),
+					},
+				},
+			}
+
+			envVars := server.Spec.Redis.ToEnvVars()
+
+			expectedEnvVars := []corev1.EnvVar{
+				{Name: EnvPrefectMessagingBroker, Value: "prefect_redis.messaging"},
+				{Name: EnvPrefectMessagingCache, Value: "prefect_redis.messaging"},
+				{Name: EnvPrefectServerConcurrencyLeaseStorage, Value: "prefect_redis.lease_storage"},
+				{Name: EnvPrefectRedisMessagingHost, Value: "redis.example.com"},
+			}
+
+			Expect(envVars).To(ConsistOf(expectedEnvVars))
+		})
+
+		It("should not configure Redis lease storage by default", func() {
+			server := &PrefectServer{
+				Spec: PrefectServerSpec{
+					Redis: &RedisConfiguration{
+						Host: new("redis.example.com"),
+					},
+				},
+			}
+
+			Expect(server.Spec.Redis.ToEnvVars()).NotTo(ContainElement(
+				HaveField("Name", EnvPrefectServerConcurrencyLeaseStorage)))
+		})
+
 		It("should generate correct environment variables with environment variable sources", func() {
 			server := &PrefectServer{
 				Spec: PrefectServerSpec{
@@ -664,5 +699,17 @@ var _ = Describe("PrefectServer type", func() {
 				Expect(args).To(Equal([]string{PrefectCLI, ServerSubcommand, StartCommand, ServerArgHost, "127.0.0.1"}))
 			})
 		})
+	})
+})
+
+var _ = Describe("PrefectServer.Replicas", func() {
+	It("defaults to 1 when unset", func() {
+		s := &PrefectServer{}
+		Expect(*s.Replicas()).To(Equal(int32(1)))
+	})
+
+	It("returns the configured value when set", func() {
+		s := &PrefectServer{Spec: PrefectServerSpec{Replicas: new(int32(3))}}
+		Expect(*s.Replicas()).To(Equal(int32(3)))
 	})
 })

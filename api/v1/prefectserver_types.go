@@ -30,6 +30,7 @@ import (
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
 // PrefectServerSpec defines the desired state of a PrefectServer
+// +kubebuilder:validation:XValidation:rule="!has(self.replicas) || self.replicas <= 1 || (has(self.postgres) && !has(self.sqlite))",message="replicas > 1 is only supported with the postgres backend alone (the controller prefers sqlite when both are set, and sqlite/ephemeral use node-local storage and must run a single replica)"
 type PrefectServerSpec struct {
 	// Version defines the version of the Prefect Server to deploy
 	Version *string `json:"version,omitempty"`
@@ -83,6 +84,22 @@ type PrefectServerSpec struct {
 
 	// NodeSelector defines the node selector for the Prefect Server Deployment and migration Job
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+
+	// Replicas defines the number of Prefect Server Deployment replicas (Postgres backend only;
+	// sqlite/ephemeral must run a single replica). Defaults to 1.
+	Replicas *int32 `json:"replicas,omitempty"`
+
+	// Affinity defines the scheduling affinity/anti-affinity for the Prefect Server pods.
+	Affinity *corev1.Affinity `json:"affinity,omitempty"`
+}
+
+// Replicas returns the desired server Deployment replica count, defaulting to 1.
+func (s *PrefectServer) Replicas() *int32 {
+	if s.Spec.Replicas != nil {
+		return s.Spec.Replicas
+	}
+	one := int32(1)
+	return &one
 }
 
 type EphemeralConfiguration struct {
@@ -131,6 +148,10 @@ func (s *SQLiteConfiguration) ToEnvVars() []corev1.EnvVar {
 }
 
 type PostgresConfiguration struct {
+	// WaitForDatabaseImage defines the image used by init containers to wait for PostgreSQL.
+	// The image must include pg_isready. Defaults to "postgres:16-alpine".
+	WaitForDatabaseImage string `json:"waitForDatabaseImage,omitempty"`
+
 	Host         *string              `json:"host,omitempty"`
 	HostFrom     *corev1.EnvVarSource `json:"hostFrom,omitempty"`
 	Port         *int                 `json:"port,omitempty"`
@@ -237,6 +258,14 @@ type RedisConfiguration struct {
 	UsernameFrom *corev1.EnvVarSource `json:"usernameFrom,omitempty"`
 	Password     *string              `json:"password,omitempty"`
 	PasswordFrom *corev1.EnvVarSource `json:"passwordFrom,omitempty"`
+
+	// LeaseStorage defines whether the server also stores concurrency-limit
+	// leases in this Redis (PREFECT_SERVER_CONCURRENCY_LEASE_STORAGE =
+	// prefect_redis.lease_storage), so leases are shared across server
+	// replicas instead of held in each replica's memory. Requires an image
+	// whose prefect-redis ships the lease_storage module; defaults to false
+	// to keep older images working.
+	LeaseStorage *bool `json:"leaseStorage,omitempty"`
 }
 
 func (r *RedisConfiguration) ToEnvVars() []corev1.EnvVar {
@@ -249,6 +278,13 @@ func (r *RedisConfiguration) ToEnvVars() []corev1.EnvVar {
 			Name:  EnvPrefectMessagingCache,
 			Value: RedisMessagingPackage,
 		},
+	}
+
+	if r.LeaseStorage != nil && *r.LeaseStorage {
+		envVars = append(envVars, corev1.EnvVar{
+			Name:  EnvPrefectServerConcurrencyLeaseStorage,
+			Value: RedisLeaseStoragePackage,
+		})
 	}
 
 	if r.Host != nil || r.HostFrom != nil {

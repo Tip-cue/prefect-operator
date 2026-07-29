@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"strconv"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 
 	prefectiov1 "github.com/PrefectHQ/prefect-operator/api/v1"
@@ -275,10 +274,18 @@ func buildAction(a prefectiov1.PrefectAutomationAction, deploymentIDs map[string
 	putStr("subject", a.Subject)
 	putStr("body", a.Body)
 	putStr("payload", a.Payload)
-	if params, err := rawToMap(a.Parameters); err == nil && a.Parameters != nil {
+	if a.Parameters != nil {
+		params, err := rawToMap(a.Parameters)
+		if err != nil {
+			return nil, fmt.Errorf("action parameters: %w", err)
+		}
 		m["parameters"] = params
 	}
-	if jv, err := rawToMap(a.JobVariables); err == nil && a.JobVariables != nil {
+	if a.JobVariables != nil {
+		jv, err := rawToMap(a.JobVariables)
+		if err != nil {
+			return nil, fmt.Errorf("action job_variables: %w", err)
+		}
 		m["job_variables"] = jv
 	}
 	return m, nil
@@ -304,10 +311,13 @@ func nonNilStrings(s []string) []string {
 }
 
 // UpdateAutomationStatus updates the K8s PrefectAutomation status from an API Automation.
+//
+// LastSyncTime is stamped by the controller (not here) after a successful sync,
+// so needsSync gates the next Prefect re-check by the resync interval
+// (spec.interval or --default-resync-interval) rather than hitting the API on
+// every reconcile.
 func UpdateAutomationStatus(k8sAutomation *prefectiov1.PrefectAutomation, automation *Automation) {
 	id := automation.ID
 	k8sAutomation.Status.Id = &id
 	k8sAutomation.Status.Ready = true
-	now := metav1.Now()
-	k8sAutomation.Status.LastSyncTime = &now
 }
